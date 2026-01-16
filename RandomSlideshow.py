@@ -12,7 +12,7 @@ from pathlib import Path
 
 # --- Configuration (Edit these) ---
 CFG_SLIDE_DURATION = 4.0      # Default seconds per slide
-CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.webp', '.tiff'}
+CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.webp', '.ico', '.tiff'}
 CFG_BG_COLOR = "#000000"
 CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
@@ -119,11 +119,6 @@ class ImageLoader:
                 ratio = max(sw/iw, sh/ih)
                 target_w, target_h = int(iw * ratio), int(ih * ratio)
             elif fit_mode == 3: # 4x Zoom
-                # Calculate fit first, then x4. Or just original x4?
-                # Usually "Zoom" means relative to screen or original.
-                # Let's do 4x of Original for simplicity or 4x of Fit.
-                # Requirement: "increase 4 times... loop"
-                # Let's do 4x original pixels.
                 target_w, target_h = iw * 4, ih * 4
 
             # Safety check
@@ -169,6 +164,7 @@ class SlideShowApp(tk.Tk):
         
         self.is_paused = False
         self.slide_timer = None
+        self.is_scanning_active = True # Flag to track scan status
         
         # View settings
         self.zoom_mode = 0  # 0=Fit, 1=Orig, 2=Fill, 3=4x
@@ -219,7 +215,6 @@ class SlideShowApp(tk.Tk):
         # Toolbar
         self.toolbar = tk.Frame(self, bg="#333333", height=CFG_TOOLBAR_HEIGHT)
         self.toolbar.pack_propagate(False)
-        # Initial placement logic handled in resize/hover events, but place initially
         self.toolbar.place(relx=0, rely=1.0, y=0, anchor='sw', relwidth=1.0)
 
         # Styles
@@ -228,7 +223,6 @@ class SlideShowApp(tk.Tk):
         style.configure("TButton", font=("Segoe UI", 9), padding=2)
 
         # Buttons
-        # Helper to pack left
         def btn(text, cmd, width=None, tooltip=""):
             b = ttk.Button(self.toolbar, text=text, command=cmd, width=width)
             b.pack(side='left', padx=2)
@@ -309,105 +303,112 @@ class SlideShowApp(tk.Tk):
         self.bind("<Configure>", self.on_resize)
 
     def start_threads(self):
-        # 1. Quick random walker (finds ONE image fast)
-        t_quick = threading.Thread(target=self.quick_start_worker, daemon=True)
-        t_quick.start()
-
-        # 2. Full scanner
+        # Full scanner
         t_scan = threading.Thread(target=self.scan_worker, daemon=True)
         t_scan.start()
+        
+        # Initial quick find
+        threading.Thread(target=self.find_random_image_dynamic, args=(True,), daemon=True).start()
 
-    # --- Scanning Logic ---
+    # --- Scanning & Search Logic ---
     
-    def quick_start_worker(self):
-        """Attempts to find a random image immediately by jumping random directories."""
-        # Simple random walk
+    def find_random_image_dynamic(self, initial=False):
+        """
+        Performs a 'random walk' through the file system to find ONE random image.
+        This is used when the full file tree is not yet built to ensure randomness.
+        """
         try:
             current = self.root_dir
-            for _ in range(30): # 30 hops max
-                if self.image_shown_flag: return # Already shown something
+            # Safety limiter
+            for _ in range(50):
+                # If we have shown something and it's initial call, stop
+                if initial and self.image_shown_flag: return 
                 
-                # Check current dir
-                with os.scandir(current) as it:
-                    dirs = []
-                    files = []
-                    for entry in it:
-                        try:
-                            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in CFG_EXTENSIONS:
-                                files.append(entry.path)
-                            elif entry.is_dir():
-                                dirs.append(entry.path)
-                        except (OSError, PermissionError): continue
-                    
-                    # 20% chance to pick here if files exist
-                    if files and (random.random() < 0.2 or not dirs):
-                        pick = random.choice(files)
-                        self.after(0, lambda p=pick: self.load_quick_image(p))
-                        return
-                    
-                    if dirs:
-                        current = random.choice(dirs)
-                    else:
-                        break # Dead end
+                try:
+                    entries = list(os.scandir(current))
+                except (OSError, PermissionError):
+                    break # Cannot read, stop walk
+                
+                # Separate dirs and files
+                dirs = [e.path for e in entries if e.is_dir()]
+                files = [e.path for e in entries if e.is_file() 
+                         and os.path.splitext(e.name)[1].lower() in CFG_EXTENSIONS]
+                
+                # Logic:
+                # 1. If we found files, small chance to pick one immediately.
+                # 2. If no files, must go deeper.
+                # 3. If no dirs, must pick file here or fail.
+                
+                pick_here = False
+                if files:
+                    if not dirs: pick_here = True
+                    elif random.random() < 0.25: pick_here = True # 25% chance to stop at this folder
+                
+                if pick_here and files:
+                    pick = random.choice(files)
+                    # Schedule UI update
+                    self.after(0, lambda p=pick: self.load_dynamic_result(p, initial))
+                    return
+                
+                if dirs:
+                    current = random.choice(dirs)
+                else:
+                    break # Dead end
         except Exception as e:
-            print(f"Quick walker error: {e}")
+            print(f"Dynamic walker error: {e}")
 
-    def load_quick_image(self, path):
-        if not self.image_shown_flag:
-            self.load_by_path(path)
-            # Ensure timer starts if not paused
-            if not self.is_paused:
-                self.schedule_next_slide()
+    def load_dynamic_result(self, path, initial):
+        # Called from main thread via after()
+        if initial and self.image_shown_flag: return
+        
+        # If we are already displaying this exact image, ignore (unlikely with random)
+        if self.current_path == path: return
+
+        self.load_by_path(path)
+        
+        # Ensure timer is running if auto-play is on
+        if not self.is_paused:
+            self.schedule_next_slide()
 
     def scan_worker(self):
         """Background full tree scan."""
-        # This will populate self.all_files
         temp_batch = []
         last_update = time.time()
         
         for root, dirs, files in os.walk(self.root_dir):
-            # Shuffle dirs in-place to randomize the tree traversal order!
-            random.shuffle(dirs)
+            random.shuffle(dirs) # Randomize traversal order
             
             for f in files:
                 if os.path.splitext(f)[1].lower() in CFG_EXTENSIONS:
                     full_path = os.path.join(root, f)
                     temp_batch.append(full_path)
             
-            # Batch update UI lists every 0.5 sec or 1000 items
             if len(temp_batch) > 1000 or (time.time() - last_update > 0.5 and temp_batch):
                 self.after(0, lambda b=list(temp_batch): self.add_files_batch(b))
                 temp_batch = []
                 last_update = time.time()
         
-        # Final batch
         if temp_batch:
             self.after(0, lambda b=list(temp_batch): self.add_files_batch(b))
+            
+        self.is_scanning_active = False # Done
 
     def add_files_batch(self, batch):
         start_idx = len(self.all_files)
         self.all_files.extend(batch)
-        # Add new indices to unviewed
         new_indices = list(range(start_idx, start_idx + len(batch)))
         self.unviewed_indices.extend(new_indices)
-        
-        # If nothing shown yet (quick walker failed or disabled?), start now
-        if not self.image_shown_flag and self.unviewed_indices:
-            self.next_image()
 
     # --- Navigation Logic ---
 
     def get_random_index(self):
         if not self.all_files: return -1
         if not self.unviewed_indices:
-            # Reset if all viewed
             self.unviewed_indices = list(range(len(self.all_files)))
         
         if not self.unviewed_indices: return -1
         
-        # Pick random
         rnd_idx = random.randrange(len(self.unviewed_indices))
-        # Swap with last for O(1) removal
         val = self.unviewed_indices[rnd_idx]
         self.unviewed_indices[rnd_idx] = self.unviewed_indices[-1]
         self.unviewed_indices.pop()
@@ -421,22 +422,7 @@ class SlideShowApp(tk.Tk):
         self.current_file_index = index
         self.current_path = path
         
-        # Remove from unviewed if present
-        # Note: this is O(N) but safer than keeping a set synced. 
-        # For huge lists we rely on get_random_index popping logic.
-        # This explicit check is for manual navigation.
-        # Ideally, we don't scan unviewed_indices here to avoid lag on huge lists.
-        # Let's just assume random picking handles the queue.
-        
         if record_history:
-            # If we navigated back and then went to a NEW random image, truncate forward history?
-            # Standard browser behavior: yes. But here we have a pointer.
-            if self.history_pointer < len(self.history) - 1:
-                # We were back in history. 
-                # If we go to a totally new image, usually we clear forward history.
-                # But here we just append and move pointer to end.
-                pass
-            
             self.history.append(index)
             self.history_pointer = len(self.history) - 1
         
@@ -445,16 +431,36 @@ class SlideShowApp(tk.Tk):
         self.reset_timer()
 
     def next_image(self):
-        # If we are traversing history
+        # 1. History forward
         if self.history_pointer < len(self.history) - 1:
             self.history_pointer += 1
             idx = self.history[self.history_pointer]
             self.goto_index(idx, False)
+            return
+
+        # 2. New random image
+        # While scanning is active, we rely heavily on dynamic walk to visit unindexed folders
+        should_dynamic_walk = False
+        
+        if self.is_scanning_active:
+            # 80% chance to random walk if scanning, to avoid getting stuck in first folders
+            if random.random() < 0.8:
+                should_dynamic_walk = True
+            elif not self.all_files:
+                should_dynamic_walk = True
+                
+        if not self.all_files and not should_dynamic_walk:
+            should_dynamic_walk = True
+
+        if should_dynamic_walk:
+            threading.Thread(target=self.find_random_image_dynamic, args=(False,), daemon=True).start()
         else:
-            # New random image
+            # Tree built or we hit the 20% chance to use known files
             idx = self.get_random_index()
             if idx != -1:
                 self.goto_index(idx, True)
+            else:
+                threading.Thread(target=self.find_random_image_dynamic, args=(False,), daemon=True).start()
 
     def prev_image(self):
         if self.history_pointer > 0:
@@ -463,25 +469,20 @@ class SlideShowApp(tk.Tk):
             self.goto_index(idx, False)
 
     def load_by_path(self, path):
-        # Try to find in all_files
+        # Try to match with existing index if possible
         try:
             idx = self.all_files.index(path)
             self.goto_index(idx)
         except ValueError:
-            # Not in list yet (quick start or external file)
-            # Display anyway
-            self.current_path = path
-            self.current_file_index = -1 # Sentinel
-            self.rotation = 0
-            self.display_current_image()
-            self.reset_timer()
+            # File not yet in scan list, add it
+            self.all_files.append(path)
+            idx = len(self.all_files) - 1
+            self.goto_index(idx)
 
     def nav_sibling(self, direction):
         if not self.current_path: return
         parent = os.path.dirname(self.current_path)
         try:
-            # Re-list directory to find neighbors
-            # Optimized: Could use self.all_files if fully populated, but os.listdir is safer for local context
             files = sorted([os.path.join(parent, f) for f in os.listdir(parent) 
                            if os.path.splitext(f)[1].lower() in CFG_EXTENSIONS])
             if not files: return
@@ -491,9 +492,7 @@ class SlideShowApp(tk.Tk):
                 next_idx = (curr_idx + direction) % len(files)
                 self.load_by_path(files[next_idx])
             except ValueError:
-                # Current file not found in folder? (Deleted/Moved)
                 if files: self.load_by_path(files[0])
-                
         except OSError:
             pass
 
@@ -515,7 +514,7 @@ class SlideShowApp(tk.Tk):
         self.image_shown_flag = True
         
         mode = 3 if (self.zoom_mode == 3 or self.temp_zoom) else self.zoom_mode
-        if self.temp_zoom and self.zoom_mode != 3: mode = 3 # Shift always forces 4x
+        if self.temp_zoom and self.zoom_mode != 3: mode = 3 
 
         self.update_loader_dims()
         
@@ -533,15 +532,10 @@ class SlideShowApp(tk.Tk):
         cx, cy = self.winfo_width()//2, self.winfo_height()//2
         self.canvas.create_image(cx, cy, image=tk_img, anchor='center', tags='img')
         
-        if mode == 3: # 4x logic for panning
+        if mode == 3:
              self.update_zoom_pan()
              
         self.update_info_label(pil_img)
-        
-        # Preload next/prev in background
-        # Strategy: Preload next random? Hard to predict random.
-        # Preload next alphabetical? Yes.
-        # self.preload_siblings() - omitted to keep simple, loader is fast enough usually
 
     def update_info_label(self, img_obj):
         if not self.current_path or self.info_mode == 3:
@@ -554,7 +548,7 @@ class SlideShowApp(tk.Tk):
             res = f"{img_obj.width}x{img_obj.height}"
             
             parts = []
-            if self.info_mode in [0, 2]: # Path included
+            if self.info_mode in [0, 2]:
                 parts.append(self.current_path)
             elif self.info_mode == 1:
                 parts.append(os.path.basename(self.current_path))
@@ -594,27 +588,12 @@ class SlideShowApp(tk.Tk):
             self.display_current_image()
 
     def on_canvas_motion(self, event):
-        # Pan logic for Zoom 4x or Fill
-        # If image is larger than screen, move it based on mouse pos relative to center
         if (self.zoom_mode == 3 or self.temp_zoom) and hasattr(self, 'current_tk_image'):
             w, h = self.winfo_width(), self.winfo_height()
             iw, ih = self.current_tk_image.width(), self.current_tk_image.height()
             
-            # Simple pan mapping: Mouse at Left -> Image Left Edge at Screen Left
-            # Mouse at Right -> Image Right Edge at Screen Right
-            
             if iw > w:
                 ratio_x = event.x / w
-                # target_x is the coordinate of the image center
-                # When ratio_x is 0 (left), left edge (center - iw/2) should be at 0? No.
-                # When ratio_x is 0, we want image left edge at 0. Image center at iw/2.
-                # When ratio_x is 1, we want image right edge at w. Image center at w - iw/2.
-                # center_x = (iw/2) * (1-rx) + (w - iw/2) * rx ?? No.
-                # Let's map offset.
-                # Max offset = iw - w.
-                # x_offset = - (iw - w) * ratio_x
-                # image_left = x_offset. center = image_left + iw/2
-                
                 img_left = - (iw - w) * ratio_x
                 cx = img_left + iw/2
             else:
@@ -630,7 +609,6 @@ class SlideShowApp(tk.Tk):
             self.canvas.coords('img', cx, cy)
 
     def update_zoom_pan(self):
-        # Trigger explicit motion update based on current pointer
         x = self.winfo_pointerx() - self.winfo_rootx()
         y = self.winfo_pointery() - self.winfo_rooty()
         class E: pass
@@ -670,6 +648,10 @@ class SlideShowApp(tk.Tk):
         F11 / Alt+Enter : Fullscreen
         Esc             : Exit Fullscreen / Quit
         F1              : This Help
+        
+        [Command Line]
+        --cwd           : Start in current directory (default: script dir)
+        --fullscreen    : Start in fullscreen mode
         """
         messagebox.showinfo("Help", text)
 
@@ -685,11 +667,9 @@ class SlideShowApp(tk.Tk):
     def check_toolbar_hover(self, event):
         if self.toolbar_locked: return
         
-        # Check mouse Y relative to window height
         root_y = self.winfo_rooty()
         pointer_y = self.winfo_pointery()
         
-        # If outside window (e.g. alt-tab), ignore
         if pointer_y < root_y or pointer_y > root_y + self.winfo_height(): return
         
         rel_y = pointer_y - root_y
@@ -717,22 +697,17 @@ class SlideShowApp(tk.Tk):
         if self.fullscreen:
             self.w_state_before_full = self.state()
             self.was_locked_before_fs = self.toolbar_locked
-            # Auto-hide toolbar in fullscreen usually, unless user wants it
-            # But "Clean" look implies hiding.
             self.toolbar_locked = False
         else:
-            self.overrideredirect(False) # Restore decorations
-            # self.state(self.w_state_before_full) # Restore zoomed/normal
+            self.overrideredirect(False)
             self.toolbar_locked = self.was_locked_before_fs
             
         self.btn_lock.config(text="HIDE" if self.toolbar_locked else "FIX")
-        # Trigger hover check manually to hide/show
         if self.toolbar_locked:
              self.toolbar.place(relx=0, rely=1.0, y=0, anchor='sw', relwidth=1.0)
 
     def cycle_info_mode(self):
         self.info_mode = (self.info_mode + 1) % 4
-        # 0: All, 1: Name only, 2: Full path, 3: None
         self.display_current_image()
 
     def toggle_pause(self):
@@ -749,9 +724,6 @@ class SlideShowApp(tk.Tk):
         try:
             f = float(val)
             if f <= 0: raise ValueError
-            # Pause while typing (implicit)? User asked: "Pause when changed"
-            # We can pause logic, but let's just reset timer.
-            # If user types garbage, pause.
         except ValueError:
             self.is_paused = True
             self.btn_play.config(text="PLAY")
@@ -794,7 +766,6 @@ class SlideShowApp(tk.Tk):
 
 if __name__ == "__main__":
     app = SlideShowApp()
-    # Default maximize
     if os.name == 'nt':
         app.state('zoomed')
     else:
