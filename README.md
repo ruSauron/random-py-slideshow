@@ -31,7 +31,7 @@ Run the script in your image folder or pass the path as an argument:
 
 ---
 
-# Fast PySlideshow (RU)
+# RU
 
 Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini.
 
