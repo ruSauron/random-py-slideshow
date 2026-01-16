@@ -1,11 +1,11 @@
 # Random py slideshow
 
-Simple Python 3 slideshow tool for navigating massive image libraries.
+Simple Python 3 slideshow tool for navigating massive image libraries. Made with Gemini.
 
 It starts displaying images immediately from a random folder while scanning the rest of the directory tree in the background. Supports random shuffle, folder navigation, and maintains a history of the last 500 viewed images.
 
 ## Requirements
-*   Python 3+
+*   Python 3.6+
 *   `pip install Pillow`
 
 ## Usage
@@ -33,12 +33,12 @@ Run the script in your image folder or pass the path as an argument:
 
 # Fast PySlideshow (RU)
 
-Простой инструмент на Python 3 для просмотра огромных коллекций изображений.
+Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini.
 
 Слайд-шоу начинается сразу же со случайной папки, пока остальные файлы сканируются в фоне. Поддерживает случайный порядок, навигацию внутри папки и хранит историю последних 500 просмотров.
 
 ## Требования
-*   Python 3+
+*   Python 3.6+
 *   `pip install Pillow`
 
 ## Запуск
