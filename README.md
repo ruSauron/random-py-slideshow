@@ -21,7 +21,8 @@ Run the script in your image folder or pass the path as an argument:
 | **Esc** | Exit Fullscreen |
 | **Space** | Play / Pause |
 | **Arrows < >** | Previous / Next Random Image |
-| **PgUp / Arrow Up / PgDn / Arrow Down** | Previous / Next File in Current Folder |
+| **Arrow Up / Arrow Down** | Previous / Next File in Current Folder |
+| PgUp / PgDn | Random file in the previous / next alphabetically sorted subfolder |
 | **Home** | First File in Folder |
 | **Z** | Toggle Zoom (Fit, Original, Fill) |
 | **Shift** (hold) | 4× Loupe Zoom |
@@ -57,7 +58,8 @@ Run the script in your image folder or pass the path as an argument:
 | **Esc** | Выход из полноэкранного режима |
 | **Пробел** | Пауза / Старт |
 | **Стрелки < >** | Предыдущая / следующая случайная картинка |
-| **PgUp / Вверх / PgDn / Вниз** | Предыдущий / следующий файл в текущей папке |
+| **Вверх / Вниз** | Предыдущий / следующий файл в текущей папке |
+| **PgUp / PgDn** | Случайный файл в предыдущей / следующей по алфавиту подпапке |
 | **Home** | Первый файл в папке |
 | **Z** | Режим масштаба (Вписать, Оригинал, Заполнить) |
 | **Shift** (удерживать) | Лупа ×4 |
