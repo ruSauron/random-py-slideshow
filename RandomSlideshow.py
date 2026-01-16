@@ -11,14 +11,12 @@ from collections import deque
 from pathlib import Path
 
 # --- КОНФИГУРАЦИЯ ---
-# Время показа слайда (сек)
-CFG_SLIDE_DURATION = 4.0      
+CFG_SLIDE_DURATION = 4.0      # Время показа слайда (сек)
 CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.webp', '.ico', '.tiff'}
 CFG_BG_COLOR = "#000000"
 CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
-# Высота зоны снизу для активации панели
-CFG_TOOLBAR_TRIGGER_ZONE = 100 
+CFG_TOOLBAR_TRIGGER_ZONE = 100 # Высота зоны снизу для активации панели
 CFG_TOOLBAR_HEIGHT = 40
 
 # --- ВСПОМОГАТЕЛЬНЫЕ КЛАССЫ ---
@@ -76,8 +74,6 @@ except ImportError:
 class ImageLoader:
     def __init__(self):
         # Кэш только для ТЕКУЩЕГО файла.
-        # Структура: { (fit_mode, rotation, screen_size): (pil_img, tk_img) }
-        # Очищается при смене файла.
         self.current_file_cache = {} 
         self.last_path = None
         self.lock = threading.Lock()
@@ -87,15 +83,6 @@ class ImageLoader:
         self.current_screen_size = (width, height)
 
     def load_image(self, path, fit_mode, rotation):
-        """
-        Загружает, вращает и масштабирует изображение.
-        fit_mode: 0=Вписать, 1=Оригинал, 2=Заполнить, 3=Лупа (4x от вписанного)
-        
-        Алгоритм кэширования:
-        1. Если путь отличается от last_path -> очистить кэш полностью.
-        2. Проверить, есть ли уже готовая картинка с такими параметрами (зум, поворот).
-        3. Если нет -> создать и сохранить.
-        """
         with self.lock:
             # Сброс кэша при смене файла
             if path != self.last_path:
@@ -134,16 +121,13 @@ class ImageLoader:
                 target_w, target_h = int(iw * ratio), int(ih * ratio)
             elif fit_mode == 3: # 4x Zoom (Лупа)
                 ratio = min(sw/iw, sh/ih)
-                # Делаем в 4 раза больше, чем режим "Вписать"
                 target_w, target_h = int(iw * ratio * 4), int(ih * ratio * 4)
 
             if target_w < 1: target_w = 1
             if target_h < 1: target_h = 1
 
-            # Оптимизация: ресайз только если нужно
+            # Оптимизация
             if (target_w, target_h) != (iw, ih):
-                # LANCZOS дает лучшее качество, но медленнее. Для 4x это может быть ощутимо.
-                # Можно сменить на BILINEAR для режима 3, если будет тормозить на слабых ПК.
                 img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
             
             tk_img = ImageTk.PhotoImage(img)
@@ -168,13 +152,12 @@ class SlideShowApp(tk.Tk):
         # --- Структуры данных ---
         self.all_files = []      # Глобальный список всех найденных файлов
         self.folder_set = set()  # Уникальные папки
-        self.unviewed_indices = [] # Индексы в all_files, которые мы еще не видели
+        self.unviewed_indices = [] # Индексы в all_files
         
         # Защита от повторов: храним пути, которые мы УЖЕ показали.
-        # Это нужно, так как "быстрый поиск" может показать файл до того, как он попадет в индекс.
         self.viewed_paths = set() 
         
-        self.history = deque(maxlen=500) # История для кнопки "Назад"
+        self.history = deque(maxlen=500) # История
         self.history_pointer = -1 
         
         self.current_path = None
@@ -208,7 +191,6 @@ class SlideShowApp(tk.Tk):
         self.setup_ui()
         self.bind_events()
         
-        # ЗАПУСК: Сначала ищем одну картинку, потом запускаем тяжелый скан
         self.start_initial_search()
         
         if self.cli_args.fullscreen:
@@ -259,9 +241,9 @@ class SlideShowApp(tk.Tk):
         btn("-->", self.next_image, 4, "Next Random (Right Arrow)")
         
         btn("<<", self.first_file_folder, 3, "First in Folder")
-        btn("<-", self.prev_file_alpha, 3, "Prev in Folder (PgUp/Up)")
-        btn("->", self.next_file_alpha, 3, "Next in Folder (PgDn/Down)")
-        
+        btn("<-", self.prev_file_alpha, 3, "Prev File (Up)")
+        btn("->", self.next_file_alpha, 3, "Next File (Down)")
+
         self.btn_play = btn("PAUSE", self.toggle_pause, 6, "Play/Pause (Space)")
 
         tk.Label(self.toolbar, text="Sec:", bg="#333333", fg="white", font=("Segoe UI", 9)).pack(side='left', padx=(5,0))
@@ -278,20 +260,21 @@ class SlideShowApp(tk.Tk):
         self.lbl_info.bind("<Button-3>", self.show_info_menu)
 
     def bind_events(self):
-        # Навигация
         self.bind("<Right>", lambda e: self.next_image())
         self.bind("<Left>", lambda e: self.prev_image())
         self.bind("<space>", lambda e: self.toggle_pause())
         
-        # Папка
-        self.bind("<Prior>", lambda e: self.prev_file_alpha()) # PgUp
-        self.bind("<Up>", lambda e: self.prev_file_alpha())    # Up Arrow
-        self.bind("<Next>", lambda e: self.next_file_alpha())  # PgDn
-        self.bind("<Down>", lambda e: self.next_file_alpha())  # Down Arrow
+        # Навигация внутри папки
+        self.bind("<Up>", lambda e: self.prev_file_alpha())    
+        self.bind("<Down>", lambda e: self.next_file_alpha())  
         self.bind("<Home>", lambda e: self.first_file_folder())
+        
+        # Навигация ПО ПАПКАМ
+        self.bind("<Prior>", lambda e: self.nav_folder_prev()) # PgUp
+        self.bind("<Next>", lambda e: self.nav_folder_next())  # PgDn
+        
         self.bind("<Return>", lambda e: self.open_current_folder())
         
-        # Вид
         self.bind("<F1>", lambda e: self.show_help())
         self.bind("<Escape>", lambda e: self.toggle_fullscreen(force_exit=True))
         self.bind("<F11>", lambda e: self.toggle_fullscreen())
@@ -299,7 +282,6 @@ class SlideShowApp(tk.Tk):
         
         self.bind("z", lambda e: self.cycle_zoom())
         self.bind("Z", lambda e: self.cycle_zoom())
-        # Зум по Shift (временный)
         self.bind("<Shift_L>", self.enable_temp_zoom)
         self.bind("<KeyRelease-Shift_L>", self.disable_temp_zoom)
         self.bind("<Shift_R>", self.enable_temp_zoom)
@@ -317,41 +299,26 @@ class SlideShowApp(tk.Tk):
         self.canvas.bind("<Motion>", self.on_canvas_motion, add=True)
         self.bind("<Configure>", self.on_resize)
 
-    # --- ЛОГИКА СКАНИРОВАНИЯ И ПОИСКА ---
+    # --- ЛОГИКА СКАНИРОВАНИЯ ---
     
     def start_initial_search(self):
-        """
-        Этап 1: Запускаем быстрый поиск (Dynamic Walker).
-        Он работает очень агрессивно, чтобы найти ХОТЯ БЫ ОДНУ картинку сразу.
-        Только после того как он найдет (или сдастся), мы запустим полный скан.
-        """
         threading.Thread(target=self.find_first_image_task, daemon=True).start()
 
     def find_first_image_task(self):
-        # Пытаемся найти картинку быстро
         self.find_random_image_dynamic(initial=True)
-        
-        # Сразу после первой попытки (удачной или нет) запускаем тяжелую артиллерию
-        # Делаем небольшую паузу, чтобы GUI отрисовал первую картинку, если нашел
         time.sleep(0.5)
         threading.Thread(target=self.scan_worker, daemon=True).start()
 
     def find_random_image_dynamic(self, initial=False):
-        """
-        Алгоритм 'Случайный блуждатель' (Random Walker).
-        Используется, когда дерево файлов еще не построено, или мы хотим абсолютной случайности.
-        
-        1. Берем текущую папку.
-        2. Получаем список файлов и папок.
-        3. С вероятностью 25% останавливаемся на текущей папке (если там есть файлы).
-        4. Если нет - ныряем в случайную подпапку.
-        5. Повторяем до 50 раз.
-        """
         try:
             current = self.root_dir
-            for _ in range(50):
+            for i in range(50):
                 if initial and self.image_shown_flag: return 
                 
+                # Показываем активность, если еще ничего не нашли
+                if initial and i % 5 == 0:
+                     self.lbl_info.config(text=f"Scanning: {os.path.basename(current)}...")
+
                 try:
                     entries = list(os.scandir(current))
                 except (OSError, PermissionError):
@@ -361,7 +328,6 @@ class SlideShowApp(tk.Tk):
                 files = [e.path for e in entries if e.is_file() 
                          and os.path.splitext(e.name)[1].lower() in CFG_EXTENSIONS]
                 
-                # Исключаем уже просмотренные файлы из выбора (важно для уникальности!)
                 unseen_files = [f for f in files if f not in self.viewed_paths]
                 
                 pick_here = False
@@ -382,27 +348,20 @@ class SlideShowApp(tk.Tk):
             print(f"Walker error: {e}")
 
     def load_dynamic_result(self, path, initial):
-        """Вызывается из потока Walker, когда картинка найдена."""
         if initial and self.image_shown_flag: return
-        if path in self.viewed_paths: return # Защита от гонки потоков
+        if path in self.viewed_paths: return
 
         self.load_by_path(path)
         
-        # FIX: Добавляем первую картинку в историю, иначе к ней нельзя вернуться
+        # Добавляем первую картинку в историю
         if not self.history:
             self.history.append(path)
             self.history_pointer = 0
-        
+            
         if not self.is_paused:
             self.schedule_next_slide()
 
-
     def scan_worker(self):
-        """
-        Фоновый сканер (Crawler).
-        Строит полный список всех файлов (all_files) и папок.
-        Обновляет UI пачками по 1000 файлов, чтобы не фризить интерфейс.
-        """
         temp_batch = []
         last_update = time.time()
         
@@ -414,7 +373,6 @@ class SlideShowApp(tk.Tk):
                     full_path = os.path.join(root, f)
                     temp_batch.append(full_path)
             
-            # Если набрали пачку или прошло время - сливаем в основной список
             if len(temp_batch) > 1000 or (time.time() - last_update > 0.5 and temp_batch):
                 self.after(0, lambda b=list(temp_batch): self.add_files_batch(b))
                 temp_batch = []
@@ -437,69 +395,40 @@ class SlideShowApp(tk.Tk):
         if self.image_shown_flag and self.show_stats.get():
              self.display_current_image()
 
-    # --- ЛОГИКА НАВИГАЦИИ (Без повторов) ---
+    # --- ЛОГИКА НАВИГАЦИИ ---
 
     def get_random_index(self):
-        """
-        Главный алгоритм выбора случайной неповторяющейся картинки.
-        
-        1. У нас есть массив unviewed_indices [0, 1, 2, ... N].
-        2. Выбираем случайный элемент.
-        3. Меняем его местами с ПОСЛЕДНИМ элементом массива.
-        4. Удаляем последний элемент (pop).
-        Это O(1) операция, очень быстрая даже для 100,000 файлов.
-        
-        ДОПОЛНЕНИЕ:
-        Так как 'Быстрый поиск' мог показать картинку до того, как она попала в индекс,
-        мы проверяем self.viewed_paths. Если индекс ведет к уже просмотренной картинке,
-        мы просто выкидываем его и ищем снова.
-        """
         if not self.all_files: return -1
-        
-        # Если список пуст - сбросить (показать заново) или завершить?
-        # В ТЗ: "пока не будут показаны все". Если все показаны, можно начать заново.
         if not self.unviewed_indices:
-             # Перезаполняем, если хотим бесконечный цикл, но исключаем current
              self.unviewed_indices = list(range(len(self.all_files)))
         
         while self.unviewed_indices:
             rnd_idx = random.randrange(len(self.unviewed_indices))
             val = self.unviewed_indices[rnd_idx]
             
-            # Swap and Pop
             self.unviewed_indices[rnd_idx] = self.unviewed_indices[-1]
             self.unviewed_indices.pop()
             
             path = self.all_files[val]
-            
-            # Проверка: не смотрели ли мы её через Dynamic Walker?
-            if path in self.viewed_paths:
-                continue # Пропускаем, берем следующую
-            
+            if path in self.viewed_paths: continue
             return val
-            
         return -1
 
     def goto_index(self, index, record_history=True):
         if index < 0 or index >= len(self.all_files): return
-        
         path = self.all_files[index]
         self.load_by_path(path, index)
-        
         if record_history:
-            self.history.append(path) # Храним пути, а не индексы, т.к. индексы постоянны
+            self.history.append(path)
             self.history_pointer = len(self.history) - 1
 
     def next_image(self):
-        # 1. Если мы листали историю назад, идем вперед по истории
         if self.history_pointer < len(self.history) - 1:
             self.history_pointer += 1
             path = self.history[self.history_pointer]
             self.load_by_path(path)
             return
 
-        # 2. Иначе ищем новую
-        # Если сканирование идет и файлов мало (<2000), помогаем Dynamic Walker'ом для "настоящего" рандома
         if self.is_scanning_active and len(self.all_files) < 2000:
              threading.Thread(target=self.find_random_image_dynamic, args=(False,), daemon=True).start()
         else:
@@ -517,11 +446,8 @@ class SlideShowApp(tk.Tk):
 
     def load_by_path(self, path, known_index=-1):
         self.current_path = path
-        
-        # Обновляем счетчик просмотренных
         self.viewed_paths.add(path)
         
-        # Пытаемся найти индекс для статистики, если не передан
         if known_index != -1:
             self.current_file_index = known_index
         else:
@@ -534,32 +460,27 @@ class SlideShowApp(tk.Tk):
         self.display_current_image()
         self.reset_timer()
 
+    # --- Навигация внутри папки ---
     def nav_sibling(self, offset):
-        """Переход к соседнему файлу в той же папке (по алфавиту)."""
         if not self.current_path: return
         parent = os.path.dirname(self.current_path)
         try:
             files = sorted([os.path.join(parent, f) for f in os.listdir(parent) 
                             if os.path.splitext(f)[1].lower() in CFG_EXTENSIONS])
             if not files: return
-            
             try:
                 curr_idx = files.index(self.current_path)
                 next_idx = (curr_idx + offset) % len(files)
-                # Тут мы не используем goto_index, т.к. это ручная навигация,
-                # но мы добавляем в историю, чтобы можно было вернуться "Влево"
                 path = files[next_idx]
                 self.load_by_path(path)
                 
-                # Добавляем в историю (опционально, обычно ручная навигация тоже пишется)
+                # Добавляем в историю (чтобы можно было вернуться влево)
                 if not self.history or self.history[-1] != path:
                     self.history.append(path)
                     self.history_pointer = len(self.history) - 1
-                    
             except ValueError:
                 if files: self.load_by_path(files[0])
-        except OSError:
-            pass
+        except OSError: pass
 
     def next_file_alpha(self): self.nav_sibling(1)
     def prev_file_alpha(self): self.nav_sibling(-1)
@@ -573,6 +494,85 @@ class SlideShowApp(tk.Tk):
             if files: self.load_by_path(files[0])
         except OSError: pass
 
+    # --- Навигация ПО ПАПКАМ (PgUp/PgDn) ---
+    def nav_folder_step(self, offset):
+        if not self.current_path: return
+        
+        # Стратегия 1: Глобальная навигация (если скан завершен)
+        # Позволяет ходить по всем папкам, даже вложенным
+        if not self.is_scanning_active and self.folder_set:
+            current_folder = os.path.dirname(self.current_path)
+            sorted_folders = sorted(list(self.folder_set))
+            try:
+                idx = sorted_folders.index(current_folder)
+                next_idx = (idx + offset) % len(sorted_folders)
+                target_folder = sorted_folders[next_idx]
+                self._load_random_in_folder(target_folder)
+            except ValueError:
+                # Если текущая папка не в списке (странно, но бывает), пробуем локальный метод
+                self._nav_folder_local(offset)
+        else:
+            # Стратегия 2: Локальная навигация (во время сканирования)
+            # Смотрим только соседей в родительской папке
+            self._nav_folder_local(offset)
+
+    def _nav_folder_local(self, offset):
+        """Переход к соседней папке на уровне файловой системы."""
+        try:
+            current_folder = os.path.dirname(self.current_path)
+            parent_folder = os.path.dirname(current_folder)
+            
+            # Получаем список соседних папок
+            entries = list(os.scandir(parent_folder))
+            subdirs = sorted([e.path for e in entries if e.is_dir()])
+            
+            if not subdirs: return
+
+            # Ищем индекс текущей
+            try:
+                # Важно: нормализуем пути для точного сравнения
+                norm_curr = os.path.normpath(current_folder)
+                norm_subdirs = [os.path.normpath(p) for p in subdirs]
+                idx = norm_subdirs.index(norm_curr)
+            except ValueError:
+                idx = 0
+            
+            # Ищем следующую папку, в которой ЕСТЬ картинки
+            # Ограничиваем круг поиска, чтобы не зависнуть если все папки пустые
+            for _ in range(len(subdirs)):
+                idx = (idx + offset) % len(subdirs)
+                target_folder = subdirs[idx]
+                
+                # Пробуем загрузить что-то из этой папки
+                if self._load_random_in_folder(target_folder):
+                    return
+                    
+        except OSError:
+            pass
+
+    def _load_random_in_folder(self, folder):
+        """Пытается найти и загрузить случайную картинку в указанной папке. Возвращает успех."""
+        try:
+            # Быстрый листинг файлов
+            files = [f for f in os.listdir(folder) 
+                     if os.path.splitext(f)[1].lower() in CFG_EXTENSIONS]
+            
+            if files:
+                target_file = os.path.join(folder, random.choice(files))
+                self.load_by_path(target_file)
+                
+                # Добавляем в историю
+                if not self.history or self.history[-1] != target_file:
+                    self.history.append(target_file)
+                    self.history_pointer = len(self.history) - 1
+                return True
+        except OSError:
+            pass
+        return False
+
+    def nav_folder_next(self): self.nav_folder_step(1)
+    def nav_folder_prev(self): self.nav_folder_step(-1)
+
     # --- ОТРИСОВКА ---
 
     def display_current_image(self):
@@ -580,14 +580,15 @@ class SlideShowApp(tk.Tk):
         self.image_shown_flag = True
         
         mode = 3 if self.temp_zoom else self.zoom_mode
-            
         self.update_loader_dims()
         pil_img, tk_img = self.loader.load_image(self.current_path, mode, self.rotation)
         
+        # FIX 1: Даже при ошибке обновляем UI, чтобы показать путь
         if not pil_img:
             self.canvas.delete("all")
             self.canvas.create_text(self.winfo_width()//2, self.winfo_height()//2, 
-                                    text="Error loading", fill="white")
+                                    text="Error loading image", fill="white")
+            self.update_info_label(None) # Передаем None вместо img_obj
             return
             
         self.current_tk_image = tk_img
@@ -614,16 +615,19 @@ class SlideShowApp(tk.Tk):
             try:
                 stats = os.stat(self.current_path)
                 f_size = Utils.format_size(stats.st_size)
-                res = f"{img_obj.width}x{img_obj.height}"
-                parts.append(f"[{res}] [{f_size}]")
+                
+                # Если картинка битая (img_obj=None), не показываем разрешение
+                if img_obj:
+                    res = f"{img_obj.width}x{img_obj.height}"
+                    parts.append(f"[{res}] [{f_size}]")
+                else:
+                    parts.append(f"[???] [{f_size}]")
             except: pass
             
         if self.show_stats.get():
-            # Статистика: Реально просмотренные (unique) / Всего найденных
             viewed = len(self.viewed_paths)
             total = len(self.all_files)
             folders = len(self.folder_set)
-            # Если total еще 0 (скан только начался), но мы уже смотрим 1
             if total < viewed: total = viewed 
             parts.append(f"({viewed} of {total} in {folders})")
 
@@ -637,23 +641,26 @@ class SlideShowApp(tk.Tk):
     def update_loader_dims(self):
         self.loader.update_screen_size(self.winfo_width(), self.winfo_height())
 
-    # --- ЗУМ И ПАН (Вращение и сдвиг) ---
+    # --- ЗУМ И ПАН ---
     
     def cycle_zoom(self):
         modes = ["ZOOM Fit", "ZOOM Orig", "ZOOM Fill"]
         self.zoom_mode = (self.zoom_mode + 1) % 3
         self.btn_zoom.config(text=modes[self.zoom_mode])
         self.display_current_image()
+        self.reset_timer() 
 
     def enable_temp_zoom(self, event):
         if not self.temp_zoom:
             self.temp_zoom = True
             self.display_current_image()
+            self.reset_timer() 
 
     def disable_temp_zoom(self, event):
         if self.temp_zoom:
             self.temp_zoom = False
             self.display_current_image()
+            self.reset_timer() 
 
     def on_canvas_motion(self, event):
         mode = 3 if self.temp_zoom else self.zoom_mode
@@ -661,24 +668,18 @@ class SlideShowApp(tk.Tk):
             w, h = self.winfo_width(), self.winfo_height()
             iw, ih = self.current_tk_image.width(), self.current_tk_image.height()
             
-            # Логика сдвига (Pan)
-            # Если картинка больше экрана, двигаем её пропорционально положению мыши
             cx, cy = w/2, h/2
-            
             if iw > w:
                 ratio_x = event.x / w
                 img_left = - (iw - w) * ratio_x
                 cx = img_left + iw/2
-            
             if ih > h:
                 ratio_y = event.y / h
                 img_top = - (ih - h) * ratio_y
                 cy = img_top + ih/2
-                
             self.canvas.coords('img', cx, cy)
 
     def update_zoom_pan(self):
-        # Эмуляция движения мыши для обновления позиции при включении зума
         x = self.winfo_pointerx() - self.winfo_rootx()
         y = self.winfo_pointery() - self.winfo_rooty()
         class E: pass
@@ -689,8 +690,9 @@ class SlideShowApp(tk.Tk):
     def rotate_image(self, deg):
         self.rotation = (self.rotation - deg) % 360
         self.display_current_image()
+        self.reset_timer()
 
-    # --- ВЗАИМОДЕЙСТВИЕ И МЕНЮ ---
+    # --- ВЗАИМОДЕЙСТВИЕ ---
 
     def show_help(self):
         text = """
@@ -702,8 +704,10 @@ class SlideShowApp(tk.Tk):
         Enter       : Open File Location
         
         [Folder Navigation]
-        PgDn / Down : Next File in Folder
-        PgUp / Up   : Prev File in Folder
+        PgDn        : Next Folder (Random image inside)
+        PgUp        : Prev Folder (Random image inside)
+        Down Arrow  : Next File in current folder
+        Up Arrow    : Prev File in current folder
         Home        : First File in Folder
         
         [View]
@@ -751,18 +755,16 @@ class SlideShowApp(tk.Tk):
         s_p = self.show_path.get()
         s_d = self.show_details.get()
         
-        # Циклическое переключение режимов инфо
-        if s_n and s_p and s_d: # All -> Name Only
+        if s_n and s_p and s_d: 
             self.show_path.set(False); self.show_details.set(False); self.show_stats.set(False)
             self.show_name.set(True)
-        elif s_n and not s_p and not s_d: # Name Only -> Path + Name
+        elif s_n and not s_p and not s_d: 
             self.show_path.set(True); self.show_name.set(True)
-        elif s_n and s_p and not s_d: # Path + Name -> Off
+        elif s_n and s_p and not s_d: 
             self.show_path.set(False); self.show_name.set(False)
-        else: # Off -> All On
+        else: 
             self.show_path.set(True); self.show_name.set(True)
             self.show_details.set(True); self.show_stats.set(True)
-            
         self.display_current_image()
 
     def check_toolbar_hover(self, event):
