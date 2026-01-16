@@ -387,8 +387,15 @@ class SlideShowApp(tk.Tk):
         if path in self.viewed_paths: return # Защита от гонки потоков
 
         self.load_by_path(path)
+        
+        # FIX: Добавляем первую картинку в историю, иначе к ней нельзя вернуться
+        if not self.history:
+            self.history.append(path)
+            self.history_pointer = 0
+        
         if not self.is_paused:
             self.schedule_next_slide()
+
 
     def scan_worker(self):
         """
@@ -711,6 +718,11 @@ class SlideShowApp(tk.Tk):
         F11 / Alt+Enter: Fullscreen
         Esc            : Exit Fullscreen / Quit
         F1             : This Help
+
+        [Command Line]
+        path           : Start scanning from specific folder
+        --cwd          : Start in current working directory
+        --fullscreen   : Start in fullscreen mode
         """
         messagebox.showinfo("Help", text)
 
