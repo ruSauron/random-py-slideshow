@@ -156,6 +156,10 @@ class ImageCache:
             if tw < 1: tw = 1
             if th < 1: th = 1
             if (tw, th) != (iw, ih): img = img.resize((tw, th), Image.Resampling.LANCZOS)
+            
+            # [FIX] Save original dimensions to metadata so we can show them later
+            img.info['original_size'] = (iw, ih)
+            
             self.put((path, mode, rotation, screen_size), img)
         except: pass
 
@@ -192,6 +196,9 @@ class SlideShowApp(tk.Tk):
         self.show_details = tk.BooleanVar(value=True); self.show_stats = tk.BooleanVar(value=True)
         self.toolbar_locked = True; self.fullscreen = False
         self.was_locked_before_fs = True; self.image_shown_flag = False
+        
+        # [FIX] State to remember resolution even if image reload fails
+        self.last_valid_meta = None
         
         self.loader = ImageLoader()
         self.setup_ui()
@@ -260,7 +267,7 @@ class SlideShowApp(tk.Tk):
         self.canvas.bind("<Motion>", self.check_toolbar_hover); self.bind("<Tab>", lambda e: self.toggle_toolbar_lock())
         self.canvas.bind("<Button-3>", self.show_context_menu)
         self.canvas.bind("<B1-Motion>", self.on_canvas_motion, add=True)
-        self.canvas.bind("<Motion>", self.on_canvas_motion, add=True) # Добавлено для работы без клика (hover)
+        self.canvas.bind("<Motion>", self.on_canvas_motion, add=True) 
         self.bind("<Configure>", self.on_resize)
 
     def start_initial_search(self): threading.Thread(target=self.find_first_image_task, daemon=True).start()
@@ -271,11 +278,28 @@ class SlideShowApp(tk.Tk):
     def find_random_image_dynamic(self, initial=False):
         try:
             current = self.root_dir
+            if initial: print(f"\n=== START INITIAL SCAN (Root: {current}) ===") 
+            
             for i in range(50):
-                if initial and self.image_shown_flag: return
+                if initial and self.image_shown_flag: 
+                    if initial: print("-> [Status] Image already shown. Stopping scan.")
+                    return
+                
+                if initial: print(f"\n[Step {i}] Current Location: {current}")
                 if initial and i % 5 == 0: self.lbl_info.config(text=f"Scanning: {os.path.basename(current)}...")
-                try: entries = list(os.scandir(current))
-                except: break
+                
+                try: 
+                    entries = list(os.scandir(current))
+                except Exception as e:
+                    if initial: print(f"-> [Error] Failed to scan directory: {e}") 
+                    # CRITICAL FIX: If scanning fails (bad zip, permission error), reset to root and retry
+                    # instead of breaking the loop completely.
+                    if initial and not self.image_shown_flag:
+                        print("-> [Recovery] Resetting search to root directory...")
+                        current = self.root_dir
+                        continue
+                    break
+                
                 dirs = []; files = []
                 for e in entries:
                     if e.is_dir(): dirs.append(e.path)
@@ -283,21 +307,49 @@ class SlideShowApp(tk.Tk):
                         ext = os.path.splitext(e.name)[1].lower()
                         if ext in CFG_EXTENSIONS: files.append(e.path)
                         elif CFG_ARCHIVES_ENABLED and ext == '.zip': dirs.append(e.path)
+                
                 unseen = [f for f in files if f not in self.viewed_paths]
+                if initial: print(f"-> [Found] Directories: {len(dirs)} | Files: {len(files)} | Unseen Candidates: {len(unseen)}")
+                
                 pick_here = False
                 if unseen:
-                    if not dirs or random.random() < 0.25: pick_here = True
+                    rnd = random.random()
+                    threshold = 0.25
+                    is_forced = (not dirs)
+                    
+                    if initial:
+                        if is_forced: print(f"-> [Decision] No subdirectories. FORCE PICK.")
+                        elif rnd < threshold: print(f"-> [Decision] Random {rnd:.3f} < {threshold}. PICK HERE.")
+                        else: print(f"-> [Decision] Random {rnd:.3f} >= {threshold}. DIVE DEEPER.")
+
+                    if is_forced or rnd < threshold: pick_here = True
+                
                 if pick_here and unseen:
-                    self.after(0, lambda p=random.choice(unseen): self.load_dynamic_result(p, initial))
+                    t = random.choice(unseen)
+                    if initial: print(f"-> [Action] Selected file: {t}")
+                    self.after(0, lambda p=t: self.load_dynamic_result(p, initial))
                     return
+                
                 if dirs:
                     ch = random.choice(dirs)
+                    if initial: print(f"-> [Action] Jumping to folder: {ch}")
+                    
                     if CFG_ARCHIVES_ENABLED and ch.lower().endswith('.zip'):
-                        if self.try_pick_from_zip(ch, initial): return
+                        if initial: print(f"-> [Archive] Attempting to pick from ZIP...")
+                        if self.try_pick_from_zip(ch, initial): 
+                            if initial: print(f"-> [Archive] Success! Image picked from ZIP.")
+                            return
+                        
+                        if initial: print(f"-> [Archive] Failed to pick from ZIP. Setting ZIP as current path.")
+                        current = ch 
+                    else: 
                         current = ch
-                    else: current = ch
-                else: break
-        except: pass
+                else: 
+                    if initial: print("-> [Stop] No subdirectories to dive into and no files chosen. Scan ends.")
+                    break
+        except Exception as e: 
+            if initial: print(f"-> [Exception] Critical error in scanner: {e}")
+            pass
 
     def try_pick_from_zip(self, zp, initial):
         try:
@@ -378,6 +430,8 @@ class SlideShowApp(tk.Tk):
 
     def load_by_path(self, path):
         self.current_path = path; self.viewed_paths.add(path); self.rotation = 0
+        # [FIX] Reset cached metadata for new file
+        self.last_valid_meta = None 
         self.display_current_image(); self.reset_timer()
         threading.Thread(target=self.schedule_prefetches, args=(path,), daemon=True).start()
 
@@ -460,13 +514,17 @@ class SlideShowApp(tk.Tk):
         self.loader.update_screen_size(self.winfo_width(), self.winfo_height())
         pil, tk_img = self.loader.load_image_sync(self.current_path, mode, self.rotation)
         self.canvas.delete("all")
+        
+        # [FIX] Persist metadata if load successful
+        if pil:
+            self.last_valid_meta = pil.info.get('original_size', (pil.width, pil.height))
+
         if not pil:
             self.canvas.create_text(self.winfo_width()//2, self.winfo_height()//2, text="Error/Loading...", fill="white")
             self.update_info_label(None); return
         self.current_tk_image = tk_img
         self.canvas.create_image(self.winfo_width()//2, self.winfo_height()//2, image=tk_img, anchor='center', tags='img')
         
-        # FIX: Check size directly instead of mode
         if pil.width > self.winfo_width() or pil.height > self.winfo_height():
             self.update_zoom_pan()
             
@@ -478,7 +536,17 @@ class SlideShowApp(tk.Tk):
         if self.show_name.get(): p.append(VFS.get_name(self.current_path))
         if self.show_details.get():
             sz = Utils.format_size(VFS.get_size(self.current_path))
-            p.append(f"[{img.width}x{img.height}] [{sz}]" if img else f"[???] [{sz}]")
+            
+            # [FIX] Use stored original resolution if available, instead of screen-resized resolution
+            w, h = None, None
+            if img:
+                w, h = img.info.get('original_size', (img.width, img.height))
+            elif self.last_valid_meta:
+                w, h = self.last_valid_meta
+            
+            res_str = f"[{w}x{h}]" if (w and h) else "[???]"
+            p.append(f"{res_str} [{sz}]")
+            
         if self.show_stats.get():
             v = len(self.viewed_paths); t = max(v, len(self.all_files))
             p.append(f"({v} of {t} in {len(self.folder_set)})")
@@ -500,12 +568,10 @@ class SlideShowApp(tk.Tk):
         if self.temp_zoom: self.temp_zoom = False; self.display_current_image(); self.reset_timer()
 
     def on_canvas_motion(self, event):
-        # FIX: Removed mode check, relying on dimensions
         if hasattr(self, 'current_tk_image') and self.current_tk_image:
             w, h = self.winfo_width(), self.winfo_height()
             iw, ih = self.current_tk_image.width(), self.current_tk_image.height()
             
-            # If image fits, center it
             if iw <= w and ih <= h:
                 self.canvas.coords('img', w/2, h/2)
                 return
