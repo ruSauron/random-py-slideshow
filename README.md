@@ -2,7 +2,7 @@
 
 # Random Py Slideshow
 
-Simple Python 3 slideshow tool for navigating massive image libraries. Made with Gemini.
+Simple Python 3 slideshow tool for navigating massive image libraries. Made with Gemini. This program should work on Windows, Linux, and macOS.
 
 The program processes hundreds of thousands of images in tens of thousands of folders on a standard hard drive within seconds. It starts displaying images immediately from a random folder while scanning the rest of the directory tree in the background. Supports random shuffle, folder navigation, and maintains a history of the last viewed images.
 
@@ -19,6 +19,7 @@ Run the script in your image folder or pass the path as an argument:
 | Key | Action |
 | :--- | :--- |
 | **F1** | Show Help |
+| **Ctrl+S** | Switch between shuffle and sequental  |
 | **Alt+Enter** / **F11** | Toggle Fullscreen |
 | **Esc** | Exit Fullscreen |
 | **Space** | Play / Pause |
@@ -39,7 +40,7 @@ Run the script in your image folder or pass the path as an argument:
 
 # Случайное слайд‑шоу (Random Py Slideshow)
 
-Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini.
+Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini. Эта программа должна работать на Windows, Linux и macOS
 
 Программа за секунды обрабатывает сотни тысяч картинок в десятках тысяч папок на простом жёстком диске. Слайд‑шоу начинается сразу же со случайной папки, пока остальные файлы сканируются в фоне. Поддерживает случайный порядок, навигацию внутри папки и до закрытия программы хранит историю последних показанных изображений.
 
@@ -56,6 +57,7 @@ Run the script in your image folder or pass the path as an argument:
 | Клавиша | Действие |
 | :--- | :--- |
 | **F1** | Справка |
+| **Ctrl+S** | Switch between shuffle and sequential playback |
 | **Alt+Enter** / **F11** | На весь экран (переключение) |
 | **Esc** | Выход из полноэкранного режима |
 | **Пробел** | Пауза / Старт |
