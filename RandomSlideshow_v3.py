@@ -632,8 +632,8 @@ Options:
 
         else:
             # --- RANDOM MODE ---
-            # Фаза 1: Сканирование активно и файлов мало -> Прыгаем по диску
-            if self.is_scanning_active and len(self.all_files) < 10000:
+            # Фаза 1: Сканирование активно -> Прыгаем по диску
+            if self.is_scanning_active:
                 threading.Thread(target=self.find_random_image_dynamic_disk, args=(False,), daemon=True).start()
                 return # Функция сама загрузит файл (асинхронно)
 
