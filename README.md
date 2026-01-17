@@ -1,3 +1,5 @@
+![Описание картинки](img/sshow.png)
+
 # Random Py Slideshow
 
 Simple Python 3 slideshow tool for navigating massive image libraries. Made with Gemini.
