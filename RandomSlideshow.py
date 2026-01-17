@@ -610,7 +610,7 @@ class SlideShowApp(tk.Tk):
         parts = []
         if self.show_path.get():
             parts.append(os.path.dirname(self.current_path))
-            parts.append(path + "\\")
+            parts.append('\\')
         if self.show_name.get(): parts.append(os.path.basename(self.current_path))
             
         if self.show_details.get():
@@ -856,4 +856,5 @@ if __name__ == "__main__":
     else:
         app.attributes('-zoomed', True)
     app.mainloop()
+
 
