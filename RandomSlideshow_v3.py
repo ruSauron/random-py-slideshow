@@ -349,7 +349,6 @@ class SlideShowApp(tk.Tk):
         global CFG_ARCHIVES_ENABLED
         parser = argparse.ArgumentParser(add_help=False) # Отключаем стандартный help
         parser.add_argument("path", nargs="?", default=None)
-        parser.add_argument("--cwd", action="store_true")
         parser.add_argument("--fullscreen", action="store_true")
         
         # Режимы
@@ -371,7 +370,6 @@ Usage: python script.py [path] [options]
 
 Options:
   path           Start scanning from specific folder
-  --cwd          Start in current working directory
   --fullscreen   Start in fullscreen mode
   --shuffle      Start in Random mode (Default)
   --sequential   Start in Sequential mode (A-Z)
@@ -381,9 +379,8 @@ Options:
             """)
             sys.exit(0)
 
-        if self.cli_args.cwd: self.root_dir = os.getcwd()
-        elif self.cli_args.path: self.root_dir = os.path.abspath(self.cli_args.path)
-        else: self.root_dir = str(Path(__file__).resolve().parent)
+        if self.cli_args.path: self.root_dir = os.path.abspath(self.cli_args.path)
+        else: self.root_dir = self.root_dir = os.getcwd()
 
         if self.cli_args.includeacr: CFG_ARCHIVES_ENABLED = True
         elif self.cli_args.excludeacr: CFG_ARCHIVES_ENABLED = False
@@ -1009,7 +1006,6 @@ Options:
         help_text = """
 [Command Line]
 path           : Start scanning from specific folder
---cwd          : Start in current working directory
 --fullscreen   : Start in fullscreen mode
 --shuffle      : Start in Random mode
 --sequential   : Start in Sequential mode
