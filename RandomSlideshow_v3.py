@@ -25,6 +25,7 @@ CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
 CFG_TOOLBAR_TRIGGER_ZONE = 100
 CFG_TOOLBAR_HEIGHT = 40
+CFG_SLIDE_MODE = "random" #random | sequential
 
 # --- ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -292,7 +293,7 @@ class ImageLoader:
 class SlideShowApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.slide_mode = 'random' # Default mode
+        self.slide_mode = CFG_SLIDE_MODE or 'random' # Default mode
         self.parse_cli_args()
         
         title_mode = "SEQ" if self.slide_mode == 'sequential' else "RND"
@@ -710,11 +711,11 @@ Options:
             if p in self.viewed_paths: return # Уже видели
             
             self.load_by_path(p)
-            
-            # Добавляем в историю, если это свежий старт
-            if not self.history:
+
+            if not self.history or self.history[-1] != p:
                 self.history.append(p)
-                self.history_pointer = 0
+	            #self.history_pointer = 0
+                self.history_pointer = len(self.history) - 1
             
             if not self.is_paused:
                 self.schedule_next_slide()
@@ -937,12 +938,12 @@ Options:
                     curr = self.all_files.index(self.current_path) + 1
                 except: curr = "?"
                 total = len(self.all_files)
-                p.append(f"(File {curr} of {total})")
+                p.append(f"({curr}/{total} in {len(self.folder_set)})")
             else:
                 # Сколько просмотрено (Random style)
                 v = len(self.viewed_paths)
                 t = len(self.all_files)
-                p.append(f"(Viewed {v}/{t})")
+                p.append(f"({v}/{t} in {len(self.folder_set)}))")
 
         self.lbl_info.config(text=" ".join(p))
 
