@@ -123,7 +123,7 @@ class VFS:
                 archive, internal = VFS.split_zip_path(path)
                 with zipfile.ZipFile(archive, 'r') as zf:
                     info = zf.getinfo(internal)
-                    if info.file_size > 500 * 1024 * 1024: # 500 MB limit for safety
+                    if info.file_size > 1024 * 1024 * 1024: # 1 GB limit for safety
                         raise ValueError("File too large inside archive")
                     return zf.read(internal)
             else:
@@ -423,8 +423,8 @@ Options:
         btn("-->", self.next_image, 4, "Next (Right)")
 
         btn("<<", self.first_file_folder, 3, "First in folder (Home)")
-        btn("<<", self.prev_file_alpha, 3, "Prev File (Up)")
-        btn(">>", self.next_file_alpha, 3, "Next File (Down)")
+        btn("<-", self.prev_file_alpha, 3, "Prev File (Up)")
+        btn("->", self.next_file_alpha, 3, "Next File (Down)")
         btn("^^", self.nav_folder_prev, 3, "Prev Folder (PgUp)")
         btn("vv", self.nav_folder_next, 3, "Next Folder (PgDn)")
 
@@ -463,7 +463,8 @@ Options:
         self.bind("<Escape>", lambda e: self.toggle_fullscreen(force_exit=True))
         self.bind("<F11>", lambda e: self.toggle_fullscreen())
         self.bind("<Alt-Return>", lambda e: self.toggle_fullscreen())
-        
+        self.bind("<F>", lambda e: self.toggle_fullscreen())
+
         # Zoom
         self.bind("z", lambda e: self.cycle_zoom())
         self.bind("Z", lambda e: self.cycle_zoom())
@@ -940,7 +941,7 @@ Options:
                 # Сколько просмотрено (Random style)
                 v = len(self.viewed_paths)
                 t = len(self.all_files)
-                p.append(f"({v}/{t} in {len(self.folder_set)}))")
+                p.append(f"({v}/{t} in {len(self.folder_set)})")
 
         self.lbl_info.config(text=" ".join(p))
 
