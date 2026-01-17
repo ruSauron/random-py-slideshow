@@ -17,7 +17,9 @@ Run the script in your image folder or pass the path as an argument:
 Either from the console or from a batch file, so you don’t have to worry about long paths and special characters.
 
 `cd /usr/images
+
 cd c:\images
+
 python RandomSlideshow_v3.py -cwd`
 
 ### Hotkeys
@@ -61,7 +63,9 @@ python RandomSlideshow_v3.py -cwd`
 или из консоли или коммандного файла, чтобы не заботиться о длинных путях и нестандартных символах:
 
 `cd /usr/images
+
 cd c:\images
+
 python RandomSlideshow_v3.py -cwd`
 
 ### Горячие клавиши
