@@ -4,7 +4,7 @@
 
 Simple Python 3 slideshow tool for navigating massive image libraries. Made with Gemini. This program should work on Windows, Linux, and macOS.
 
-The program processes hundreds of thousands of images in tens of thousands of folders on a standard hard drive within seconds. It starts displaying images immediately from a random folder while scanning the rest of the directory tree in the background. Supports random shuffle, folder navigation, and maintains a history of the last viewed images.
+The program processes hundreds of thousands of images in tens of thousands of folders on a standard hard drive within seconds. It starts displaying images immediately from a random folder while scanning the rest of the directory tree in the background. Supports random shuffle and sequential mode, folder navigation, and maintains a history of the last viewed images.
 
 ## Requirements
 * Python 3.6+
@@ -48,7 +48,9 @@ Either cheang directory first from the console or from a batch file:
 
 Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini. Эта программа должна работать на Windows, Linux и macOS
 
-Программа за секунды обрабатывает сотни тысяч картинок в десятках тысяч папок на простом жёстком диске. Слайд‑шоу начинается сразу же со случайной папки, пока остальные файлы сканируются в фоне. Поддерживает случайный порядок, навигацию внутри папки и до закрытия программы хранит историю последних показанных изображений.
+Программа за секунды обрабатывает сотни тысяч картинок в десятках тысяч папок на простом жёстком диске. Слайд‑шоу начинается сразу же со случайной папки, пока остальные файлы сканируются в фоне. Поддерживает случайный порядок и последовательный показ, навигацию внутри папки и до закрытия программы хранит историю последних показанных изображений.
+
+Можно смотреть анимацию своих фото перейдя в последовательный режим и указав задержку менее 0.2с
 
 ## Требования
 * Python 3.6+
