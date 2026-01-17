@@ -25,6 +25,7 @@ CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
 CFG_TOOLBAR_TRIGGER_ZONE = 100
 CFG_TOOLBAR_HEIGHT = 40
+CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.tiff', '.webp', '.ico', '.avif'}
 
 # --- ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -45,7 +46,6 @@ try:
 except ImportError:
     pass
 
-CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.tiff', '.webp', '.ico', '.avif'}
 if HEIC_SUPPORT:
     CFG_EXTENSIONS.add('.heic')
     CFG_EXTENSIONS.add('.heif')
@@ -1145,3 +1145,4 @@ if __name__ == "__main__":
         try: app.attributes('-zoomed', True)
         except: pass
     app.mainloop()
+
