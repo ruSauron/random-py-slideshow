@@ -19,7 +19,7 @@ Run the script in your image folder or pass the path as an argument:
 | Key | Action |
 | :--- | :--- |
 | **F1** | Show Help |
-| **Ctrl+S** | Switch between shuffle and sequental  |
+| **Ctrl+S** | Switch between shuffle and sequential playback |
 | **Alt+Enter** / **F11** | Toggle Fullscreen |
 | **Esc** | Exit Fullscreen |
 | **Space** | Play / Pause |
@@ -57,7 +57,7 @@ Run the script in your image folder or pass the path as an argument:
 | Клавиша | Действие |
 | :--- | :--- |
 | **F1** | Справка |
-| **Ctrl+S** | Switch between shuffle and sequential playback |
+| **Ctrl+S** | Переключение между слуайным и последовательным показом |
 | **Alt+Enter** / **F11** | На весь экран (переключение) |
 | **Esc** | Выход из полноэкранного режима |
 | **Пробел** | Пауза / Старт |
