@@ -14,11 +14,11 @@ The program processes hundreds of thousands of images in tens of thousands of fo
 Run the script in your image folder or pass the path as an argument:  
 `python RandomSlideshow_v3.py "C:\Images"`
 
-Either from the console or from a batch file, so you don’t have to worry about long paths and special characters.
+Either cheang directory first from the console or from a batch file:
 
     cd /usr/images
     cd c:\images
-    python RandomSlideshow_v3.py -cwd
+    python RandomSlideshow_v3.py
 
 ### Hotkeys
 
@@ -58,11 +58,11 @@ Either from the console or from a batch file, so you don’t have to worry about
 Запустите скрипт в папке с изображениями или укажите путь аргументом:  
 `python RandomSlideshow.py "C:\Images"`
 
-или из консоли или коммандного файла, чтобы не заботиться о длинных путях и нестандартных символах:
+или сначала перейти в папку из консоли или коммандного файла
 
     cd /usr/images
     cd c:\images
-    python RandomSlideshow_v3.py -cwd
+    python RandomSlideshow_v3.py
 
 ### Горячие клавиши
 
