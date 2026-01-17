@@ -25,7 +25,6 @@ CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
 CFG_TOOLBAR_TRIGGER_ZONE = 100
 CFG_TOOLBAR_HEIGHT = 40
-CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.tiff', '.webp', '.ico', '.avif'}
 
 # --- ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,6 +45,7 @@ try:
 except ImportError:
     pass
 
+CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.tiff', '.webp', '.ico', '.avif'}
 if HEIC_SUPPORT:
     CFG_EXTENSIONS.add('.heic')
     CFG_EXTENSIONS.add('.heif')
@@ -411,7 +411,7 @@ Options:
         btn("?", self.show_help, 2, "Help (F1)")
         
         # Кнопка переключения режима
-        txt_mode = "SEQ" if self.slide_mode == 'sequential' else "RND"
+        txt_mode = "RND" if self.slide_mode == 'sequential' else "SEQ"
         self.btn_mode = btn(txt_mode, self.toggle_slide_mode, 4, "Toggle Random/Sequential (Ctrl+S)")
 
         self.btn_lock = btn("HIDE", self.toggle_toolbar_lock, 5, "Lock Toolbar (Tab)")
@@ -586,7 +586,7 @@ Options:
             self.reset_timer()
 
     def next_image(self):
-        # 1. Навигация по истории вперед
+        # 1. Навигация по истории вперед (если пользователь нажимал "Назад")
         if self.history_pointer < len(self.history) - 1:
             self.history_pointer += 1
             self.load_by_path(self.history[self.history_pointer])
@@ -599,31 +599,53 @@ Options:
             # --- SEQUENTIAL MODE ---
             if not self.all_files: return
             
-            # Ищем текущий индекс. Можно оптимизировать, храня индекс, 
-            # но поиск надежнее при динамическом обновлении списка.
             try:
-                # Если текущего файла нет в списке (удалили/фильтр), начнем с 0
-                idx = self.all_files.index(self.current_path) if self.current_path in self.all_files else -1
+                # Попытка 1: Быстрый поиск точного совпадения строки пути
+                idx = self.all_files.index(self.current_path)
             except ValueError:
+                # Попытка 2: Умный поиск (если сканер не дошел или слэши отличаются)
+                # Ищем первый файл в списке, который по алфавиту идет ПОСЛЕ текущего
                 idx = -1
-            
+                if self.current_path:
+                    try:
+                        c_norm = os.path.normpath(self.current_path)
+                        c_key = Utils.natural_keys(c_norm)
+                        
+                        # Линейный поиск точки вставки (O(N), приемлемо до ~100k файлов)
+                        # Так как all_files уже отсортирован, мы просто ищем границу
+                        found = False
+                        for i, f in enumerate(self.all_files):
+                            # Сравниваем нормализованные ключи
+                            if Utils.natural_keys(os.path.normpath(f)) > c_key:
+                                idx = i - 1 # Нашли следующий (i), значит текущий был бы (i-1)
+                                found = True
+                                break
+                        
+                        # Если не нашли (значит текущий файл "больше" всех в списке),
+                        # то idx остается -1, и следующий будет 0 (начало списка).
+                    except Exception as e:
+                        logging.warning(f"Smart search error: {e}")
+                        idx = -1
+                
             next_idx = (idx + 1) % len(self.all_files)
             next_path = self.all_files[next_idx]
 
         else:
             # --- RANDOM MODE ---
-            # Фаза 1: Сканирование активно -> Прыгаем по диску
-            if self.is_scanning_active:
+            # Фаза 1: Сканирование активно и файлов мало -> Прыгаем по диску
+            if self.is_scanning_active and len(self.all_files) < 10000:
                 threading.Thread(target=self.find_random_image_dynamic_disk, args=(False,), daemon=True).start()
-                return # Функция сама загрузит файл
+                return # Функция сама загрузит файл (асинхронно)
 
             # Фаза 2: База набрана -> Выбор из RAM
             if self.all_files:
-                for _ in range(500): # 500 попыток найти неповторяющийся
+                # Пытаемся найти файл, которого нет в недавней истории
+                for _ in range(50): 
                     p = random.choice(self.all_files)
                     if p not in self.history:
                         next_path = p
                         break
+                # Если не вышло, берем любой
                 if not next_path: next_path = random.choice(self.all_files)
 
         if next_path:
@@ -1145,4 +1167,3 @@ if __name__ == "__main__":
         try: app.attributes('-zoomed', True)
         except: pass
     app.mainloop()
-
