@@ -14,7 +14,7 @@ The program processes hundreds of thousands of images in tens of thousands of fo
 Run the script in your image folder or pass the path as an argument:  
 `python RandomSlideshow_v3.py "C:\Images"`
 
-Either cheang directory first from the console or from a batch file:
+Either change directory first from the console or from a batch file:
 
     cd /usr/images
     cd c:\images
