@@ -15,11 +15,12 @@ import re
 from collections import deque, OrderedDict
 from pathlib import Path
 from tkinter import ttk, messagebox, Menu
-# rusauron, RandomSlideshow v0.58
+# rusauron, RandomSlideshow v0.59
 
 # --- КОНФИГУРАЦИЯ (DEFAULTS) ---
 CFG_ARCHIVES_ENABLED = True
 CFG_SLIDE_DURATION = 4.0
+CFG_SLIDE_MIN_DURATION = 0.02
 CFG_FORCE_MIN_DURATION = False # Ждать полной загрузки перед запуском таймера (True) или включать таймер сразу (False)
 CFG_BG_COLOR = "#000000"
 CFG_TEXT_COLOR = "#FFFFFF"
@@ -720,8 +721,12 @@ class SlideShowApp(tk.Tk):
 
     # --- ЛОГИКА СКАНИРОВАНИЯ ---
     def start_initial_search(self):
-        # Поток для прыжков по диску (быстрый старт)
-        threading.Thread(target=self.find_first_image_task, daemon=True).start()
+        # [FIX] Если указан конкретный файл (архив), сканер диска (scandir) сломается.
+        # Мы полагаемся только на scan_worker, который быстро распарсит архив.
+        if not os.path.isfile(self.root_dir):
+            # Поток для прыжков по диску (быстрый старт)
+            threading.Thread(target=self.find_first_image_task, daemon=True).start()
+        
         # Поток полного индексирования
         threading.Thread(target=self.scan_worker, daemon=True).start()
 
@@ -782,6 +787,18 @@ class SlideShowApp(tk.Tk):
         self.all_files.extend(batch)
         for p in batch: self.folder_set.add(VFS.get_parent(p))
 
+        # [FIX] Если ничего не воспроизводится и пришли первые файлы (актуально для ZIP)
+        if not self.current_path and self.all_files:
+            # Выбираем стартовый файл
+            if CFG_SLIDE_MODE == 'sequential':
+                start_path = self.all_files[0]
+            else:
+                start_path = random.choice(self.all_files)
+            
+            # Инициируем загрузку
+            self._initial_load_callback(start_path, True)
+
+
     # --- НАВИГАЦИЯ И ЗАГРУЗКА ---
 
     def next_image(self):
@@ -822,32 +839,53 @@ class SlideShowApp(tk.Tk):
             self.load_by_path(self.history[self.history_pointer])
 
     def find_random_image_dynamic_disk(self, initial=False):
-        # Упрощенная логика для краткости: прыгаем 50 раз, ищем файлы
-        # В случае ошибки или пустоты берет root
         curr = self.root_dir
-        
+    
         # Обновляем инфо при поиске
         if initial: 
             self.update_info_text(f"Scanning: {curr}", is_loading=True)
             self.update() # Важно: обновить UI, иначе текст не появится до конца сканирования
-
-        
-        for _ in range(20):
+    
+        for _ in range(100):
             try:
                 entries = list(os.scandir(curr))
                 dirs = [e.path for e in entries if e.is_dir()]
-                files = [e.path for e in entries if e.is_file() and os.path.splitext(e.name)[1].lower() in CFG_EXTENSIONS]
-                
+                files = [
+                    e.path for e in entries
+                    if e.is_file() and os.path.splitext(e.name)[1].lower() in CFG_EXTENSIONS
+                ]
+    
+                # Если нашли файлы — обрабатываем с вероятностью 30% (как раньше)
                 if files and (not dirs or random.random() < 0.3):
                     p = random.choice(files)
                     self.after(0, lambda: self._initial_load_callback(p, initial))
                     return
-                
-                if dirs: curr = random.choice(dirs)
-                else: break
-                
-                if initial: self.update_info_text(f"Scanning: {curr}", is_loading=True)
-            except: break
+    
+                # Если есть поддиректории — идём в случайную
+                if dirs:
+                    curr = random.choice(dirs)
+                else:
+                    # Нет поддиректорий И нет файлов — применяем новую логику
+                    if not files and curr != self.root_dir:  # Не в корне и пусто
+                        if random.random() < 0.5:
+                            # 50% — подняться на уровень выше
+                            curr = os.path.dirname(curr)
+                        else:
+                            # 50% — вернуться в корневую директорию
+                            curr = self.root_dir
+                    else:
+                        # Если в корне или есть файлы (но нет директорий) — прерываем
+                        break
+    
+                if initial:
+                    self.update_info_text(f"Scanning: {curr}", is_loading=True)
+    
+            except Exception as e:
+                # Лучше логгировать ошибку (опционально)
+                # print(f!Error scanning {curr}: {e}")
+                break
+
+
 
     def _initial_load_callback(self, p, initial):
         if initial and self.current_path: return 
@@ -1006,7 +1044,12 @@ class SlideShowApp(tk.Tk):
         
         # Stats
         if self.show_stats.get():
-            hist_len = len(self.history)
+            #hist_len = len(self.history)
+            if self.slide_mode == 'sequential':
+                hist_len = self.all_files.index(self.current_path) + 1
+            else:
+                hist_len = len(self.viewed_paths)
+
             scanned = len(self.all_files)
             folders = len(self.folder_set)
             parts.append(f"| {hist_len}/{scanned} in {folders}")
@@ -1255,7 +1298,7 @@ class SlideShowApp(tk.Tk):
         try:
             val = float(self.speed_var.get().replace(',', '.'))
             global CFG_SLIDE_DURATION
-            CFG_SLIDE_DURATION = val
+            CFG_SLIDE_DURATION = max(val, CFG_SLIDE_MIN_DURATION)
         except: pass
 
     def reset_timer(self):
