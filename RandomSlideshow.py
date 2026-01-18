@@ -20,6 +20,7 @@ from pathlib import Path
 # --- КОНФИГУРАЦИЯ ---
 CFG_ARCHIVES_ENABLED = True
 CFG_SLIDE_DURATION = 4.0
+CFG_FORCE_MIN_DURATION = True  # Если True, таймер тикает только когда картинка УЖЕ на экране
 CFG_BG_COLOR = "#000000"
 CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
@@ -194,99 +195,191 @@ class ToolTip:
         if self._after_id: self.widget.after_cancel(self._after_id); self._after_id = None
         if self._tip: self._tip.destroy(); self._tip = None
 
+
+
 class ImageCache:
     """
-    Кэш декодированных изображений (Pillow objects).
-    Позволяет быстро переключать слайды без повторного чтения с диска.
+    Кэш с поддержкой приоритетов, поколений задач и раздельных пулов.
     """
-    def __init__(self, capacity=5):
+    def __init__(self, capacity=10):
         self.capacity = capacity
         self.cache = OrderedDict()
         self.lock = threading.RLock()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        
+        # Пул для быстрых превью (2 потока, чтобы не блокировать интерфейс)
+        self.executor_fast = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        # Пул для тяжелого декодинга (1 поток, чтобы задачи выстраивались в очередь)
+        self.executor_hq = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        
+        # Поколение задач. Инкрементируется при смене слайда.
+        # Позволяет "отменять" старые задачи (они просто завершаются без результата).
+        self.current_generation = 0
+        self.gen_lock = threading.Lock()
+
+    def cancel_all_tasks(self):
+        """Инвалидирует все текущие задачи в очередях."""
+        with self.gen_lock:
+            self.current_generation += 1
 
     def get(self, key):
         with self.lock:
             if key in self.cache:
                 self.cache.move_to_end(key)
-                return self.cache[key]
+                return self.cache[key] # (Image, is_final)
             return None
 
-    def put(self, key, image):
+    def put(self, key, image, is_final):
         with self.lock:
-            self.cache[key] = image
+            # Если уже есть финальная версия, черновик её не перезаписывает
+            if key in self.cache and self.cache[key][1] and not is_final:
+                return
+            self.cache[key] = (image, is_final)
             self.cache.move_to_end(key)
             if len(self.cache) > self.capacity:
                 self.cache.popitem(last=False)
 
-    def prefetch(self, path, mode, rotation, screen_size):
+    def submit_load_task(self, path, mode, rotation, screen_size, is_draft, callback=None, generation=None):
+        """
+        Ставит задачу на декодирование.
+        is_draft=True -> executor_fast
+        is_draft=False -> executor_hq
+        """
+        if generation is None:
+            with self.gen_lock: generation = self.current_generation
+
         key = (path, mode, rotation, screen_size)
-        if self.get(key) is None:
-            self.executor.submit(self._decode_task, path, mode, rotation, screen_size)
+        
+        # Проверка кэша перед запуском (чтобы не делать лишнюю работу)
+        cached = self.get(key)
+        if cached:
+            if cached[1]: return # Уже есть финал
+            if not cached[1] and is_draft: return # Уже есть драфт, а мы хотим драфт
 
-    def _decode_task(self, path, mode, rotation, screen_size):
+        executor = self.executor_fast if is_draft else self.executor_hq
+        executor.submit(self._worker, key, is_draft, generation, callback)
+
+    def _worker(self, key, is_draft, task_gen, callback):
+        # 1. Проверка актуальности задачи
+        with self.gen_lock:
+            if task_gen != self.current_generation:
+                return # Задача устарела, пропускаем
+
+        path, mode, rotation, screen_size = key
+        
         try:
+            # Чтение
             data = VFS.read_bytes(path)
+            
+            # Повторная проверка перед тяжелым декодингом
+            with self.gen_lock:
+                if task_gen != self.current_generation: return
+
             img = Image.open(io.BytesIO(data))
-            img = ImageOps.exif_transpose(img)
-            
-            if rotation != 0:
-                img = img.rotate(rotation, expand=True)
-            
+            original_size = img.size
+            iw, ih = original_size
             sw, sh = screen_size
-            iw, ih = img.size
-            tw, th = iw, ih
 
-            # Расчет размеров
-            if mode == 0:   # Fit
-                ratio = min(sw/iw, sh/ih)
-                tw, th = int(iw*ratio), int(ih*ratio)
-            elif mode == 1: # Orig
-                tw, th = iw, ih
-            elif mode == 2: # Fill
-                ratio = max(sw/iw, sh/ih)
-                tw, th = int(iw*ratio), int(ih*ratio)
-            elif mode == 3: # Shift / Magnify (2x)
-                tw, th = iw * 2, ih * 2
+            # --- ЭВРИСТИКА / ОПТИМИЗАЦИЯ ---
+            # Применяем draft только если явно попросили (is_draft=True)
+            # ИЛИ если это HQ, но картинка колоссально больше экрана (для экономии RAM/CPU)
+            
+            if is_draft and img.format == 'JPEG':
+                 # Агрессивный драфт
+                 try: img.draft(None, (iw//4, ih//4))
+                 except: pass
+            
+            elif not is_draft and img.format == 'JPEG':
+                 # Умный HQ: если картинка 8000x6000, а экран 1920x1080,
+                 # нет смысла декодировать полностью. Делаем draft x2 от экрана.
+                 ratio = min(sw/iw, sh/ih) if mode == 0 else max(sw/iw, sh/ih)
+                 if ratio < 0.25: # Если уменьшаем более чем в 4 раза
+                      target_w = max(sw, int(iw * ratio * 2.0))
+                      target_h = max(sh, int(ih * ratio * 2.0))
+                      try: img.draft(None, (target_w, target_h))
+                      except: pass
 
-            if tw < 1: tw = 1
+            img = ImageOps.exif_transpose(img)
+            if rotation != 0: img = img.rotate(rotation, expand=True)
+
+            # Ресайз
+            cw, ch = img.size
+            tw, th = cw, ch
+            
+            if mode == 0:   ratio = min(sw/cw, sh/ch)
+            elif mode == 1: ratio = 1.0
+            elif mode == 2: ratio = max(sw/cw, sh/ch)
+            elif mode == 3: ratio = 2.0
+            
+            if mode != 1:
+                tw, th = int(cw*ratio), int(ch*ratio)
+            
+            if tw < 1: tw = 1; 
             if th < 1: th = 1
 
-            if (tw, th) != (iw, ih):
-                img = img.resize((tw, th), Image.Resampling.LANCZOS)
+            if (tw, th) != (cw, ch):
+                # Draft -> Bilinear (быстро), HQ -> Lanczos (качественно)
+                resample = Image.Resampling.BILINEAR if is_draft else Image.Resampling.LANCZOS
+                if tw < cw and th < ch:
+                    img.thumbnail((tw, th), resample)
+                else:
+                    img = img.resize((tw, th), resample)
+
+            img.info['original_size'] = original_size
             
-            img.info['original_size'] = (iw, ih)
-            self.put((path, mode, rotation, screen_size), img)
+            # Финальная проверка перед сохранением
+            with self.gen_lock:
+                if task_gen != self.current_generation: return
+
+            self.put(key, img, not is_draft)
+            
+            if callback:
+                callback(path, img, not is_draft)
+
         except Exception as e:
-            logging.error(f"Decode task failed for {path}: {e}")
+            logging.error(f"Worker error ({path}): {e}")
 
 class ImageLoader:
-    """Абстракция над кэшем для GUI."""
     def __init__(self):
-        self.cache = ImageCache(capacity=6)
+        self.cache = ImageCache(capacity=10)
         self.current_screen_size = (1920, 1080)
 
     def update_screen_size(self, width, height):
         self.current_screen_size = (width, height)
 
-    def load_image_sync(self, path, fit_mode, rotation):
+    def get_image_direct(self, path, mode, rotation):
+        """Синхронная попытка получить из кэша (для мгновенного отображения)."""
+        return self.cache.get((path, mode, rotation, self.current_screen_size))
+
+    def request_load(self, path, mode, rotation, is_draft, callback=None):
+        """Асинхронный запрос на загрузку."""
+        self.cache.submit_load_task(
+            path, mode, rotation, self.current_screen_size, is_draft, callback
+        )
+
+    def cancel_all(self):
+        self.cache.cancel_all_tasks()
+        self.current_screen_size = (1920, 1080)
+
+    def update_screen_size(self, width, height):
+        self.current_screen_size = (width, height)
+
+    def get_image_async(self, path, fit_mode, rotation, on_loaded):
         """
-        Берет из кэша или декодирует в текущем потоке (если кэш пуст).
-        GUI должен вызывать это внутри своего Executor'а, чтобы не фризить интерфейс.
+        Запрашивает изображение.
+        Возвращает (PillowImage, is_final) сразу, если есть в кэше.
+        Если нет, вернет (None, False) и вызовет on_loaded позже.
         """
-        key = (path, fit_mode, rotation, self.current_screen_size)
-        pil_img = self.cache.get(key)
-        if not pil_img:
-            self.cache._decode_task(path, fit_mode, rotation, self.current_screen_size)
-            pil_img = self.cache.get(key)
-        
-        if pil_img:
-            return pil_img, ImageTk.PhotoImage(pil_img)
-        return None, None
+        return self.cache.request_image(path, fit_mode, rotation, self.current_screen_size, on_loaded)
 
     def trigger_prefetch(self, paths, fit_mode, rotation):
         for p in paths:
-            if p: self.cache.prefetch(p, fit_mode, rotation, self.current_screen_size)
+            if p: 
+                # Предзагрузка всегда запрашивает Draft сначала, потом HQ
+                # Callback = None, т.к. нам не нужно обновлять экран
+                self.cache.request_image(p, fit_mode, rotation, self.current_screen_size, None)
+
+
+
 
 # --- ГЛАВНЫЙ КЛАСС ПРИЛОЖЕНИЯ ---
 
@@ -315,6 +408,7 @@ class SlideShowApp(tk.Tk):
         self.history_pointer = -1
         
         self.current_path = None
+        self.next_random_prepared = None # Для предзагрузки следующего случайного
         self.is_paused = False
         self.slide_timer = None
         self.is_scanning_active = True
@@ -352,13 +446,15 @@ class SlideShowApp(tk.Tk):
         parser.add_argument("--fullscreen", action="store_true")
         
         # Режимы
-        parser.add_argument("--shuffle", action="store_true")
-        parser.add_argument("--sequential", "--seq", action="store_true")
+        shuffle_group = parser.add_mutually_exclusive_group()
+        shuffle_group .add_argument("--shuffle", action="store_true")
+        shuffle_group .add_argument("--sequential", "--seq", action="store_true")
+
         parser.add_argument("--help", "-h", "-?", action="store_true")
 
-        g = parser.add_mutually_exclusive_group()
-        g.add_argument("--includeacr", action="store_true")
-        g.add_argument("--excludeacr", action="store_true")
+        archive_group = parser.add_mutually_exclusive_group()
+        archive_group.add_argument("--includeacr", action="store_true")
+        archive_group.add_argument("--excludeacr", action="store_true")
 
         self.cli_args = parser.parse_args()
 
@@ -491,6 +587,8 @@ Options:
         self.canvas.bind("<Motion>", self.check_toolbar_hover)
         self.canvas.bind("<Button-3>", self.show_context_menu)
         self.canvas.bind("<B1-Motion>", self.on_canvas_motion, add=True)
+        self.canvas.bind("<Motion>", self.on_canvas_motion, add=True)
+
         self.canvas.bind("<Configure>", self.on_resize)
 
     # --- ЛОГИКА СКАНИРОВАНИЯ (Natural Sort) ---
@@ -505,6 +603,26 @@ Options:
         time.sleep(0.5)
         # Запуск полного сканирования
         threading.Thread(target=self.scan_worker, daemon=True).start()
+
+    def update_loading_status(self, text):
+        """Обновляет статус по центру экрана (только если картинки еще нет)."""
+        def _u():
+            # Если уже есть картинка, не рисуем поверх нее статус сканирования
+            if self.image_shown_flag and "Scanning" in text: return
+            
+            # Удаляем старый текст статуса
+            self.canvas.delete("status_text")
+            
+            # Если картинка уже есть, а мы хотим показать "Loading" следующей, 
+            # можно не рисовать (чтобы не портить вид), либо рисовать мелко.
+            # Но по вашей задаче "на черном экране" -> значит image_shown_flag False.
+            
+            if not self.image_shown_flag:
+                cx, cy = self.winfo_width() // 2, self.winfo_height() // 2
+                self.canvas.create_text(cx, cy, text=text, fill="#888888", 
+                                      font=("Arial", 12), tags="status_text", width=800, justify='center')
+        
+        self.after(0, _u)
 
     def scan_worker(self):
         """
@@ -521,6 +639,20 @@ Options:
                 self.after(0, lambda b=list(temp): self.add_batch(b))
             temp = []
             last = time.time()
+
+        # [FIX] Обработка случая, когда передан путь к файлу (архиву)
+        if os.path.isfile(self.root_dir) and self.root_dir.lower().endswith('.zip') and CFG_ARCHIVES_ENABLED:
+            try:
+                with zipfile.ZipFile(self.root_dir, 'r') as zf:
+                    names = sorted(zf.namelist(), key=lambda x: Utils.natural_keys(x))
+                    for n in names:
+                        if os.path.splitext(n)[1].lower() in CFG_EXTENSIONS:
+                            temp.append(f"{VFS.PREFIX}{self.root_dir}{VFS.SEPARATOR}{n}")
+            except: pass
+            flush()
+            self.is_scanning_active = False
+            self.after(0, self.optimize_history_size)
+            return
 
         for root, dirs, files in os.walk(self.root_dir):
             # Сортируем папки для правильного порядка обхода
@@ -599,29 +731,19 @@ Options:
             if not self.all_files: return
             
             try:
-                # Попытка 1: Быстрый поиск точного совпадения строки пути
                 idx = self.all_files.index(self.current_path)
             except ValueError:
-                # Попытка 2: Умный поиск (если сканер не дошел или слэши отличаются)
-                # Ищем первый файл в списке, который по алфавиту идет ПОСЛЕ текущего
                 idx = -1
                 if self.current_path:
                     try:
                         c_norm = os.path.normpath(self.current_path)
                         c_key = Utils.natural_keys(c_norm)
-                        
-                        # Линейный поиск точки вставки (O(N), приемлемо до ~100k файлов)
-                        # Так как all_files уже отсортирован, мы просто ищем границу
                         found = False
                         for i, f in enumerate(self.all_files):
-                            # Сравниваем нормализованные ключи
                             if Utils.natural_keys(os.path.normpath(f)) > c_key:
-                                idx = i - 1 # Нашли следующий (i), значит текущий был бы (i-1)
+                                idx = i - 1
                                 found = True
                                 break
-                        
-                        # Если не нашли (значит текущий файл "больше" всех в списке),
-                        # то idx остается -1, и следующий будет 0 (начало списка).
                     except Exception as e:
                         logging.warning(f"Smart search error: {e}")
                         idx = -1
@@ -634,18 +756,22 @@ Options:
             # Фаза 1: Сканирование активно -> Прыгаем по диску
             if self.is_scanning_active:
                 threading.Thread(target=self.find_random_image_dynamic_disk, args=(False,), daemon=True).start()
-                return # Функция сама загрузит файл (асинхронно)
+                return 
 
             # Фаза 2: База набрана -> Выбор из RAM
             if self.all_files:
-                # Пытаемся найти файл, которого нет в недавней истории
-                for _ in range(50): 
-                    p = random.choice(self.all_files)
-                    if p not in self.history:
-                        next_path = p
-                        break
-                # Если не вышло, берем любой
-                if not next_path: next_path = random.choice(self.all_files)
+                # [MOD] Сначала проверяем, не выбрали ли мы файл заранее в prefetch
+                if self.next_random_prepared:
+                    next_path = self.next_random_prepared
+                    self.next_random_prepared = None # Сброс после использования
+                else:
+                    # Если нет, выбираем сейчас
+                    for _ in range(50): 
+                        p = random.choice(self.all_files)
+                        if p not in self.history:
+                            next_path = p
+                            break
+                    if not next_path: next_path = random.choice(self.all_files)
 
         if next_path:
             self.load_by_path(next_path)
@@ -658,8 +784,14 @@ Options:
         Используется ТОЛЬКО во время сканирования, чтобы не показывать одни 'A' файлы.
         """
         try:
+            # [FIX] Если корень - это архив, сразу пытаемся взять оттуда
+            if os.path.isfile(self.root_dir) and self.root_dir.lower().endswith('.zip') and CFG_ARCHIVES_ENABLED:
+                self.try_pick_from_zip(self.root_dir, initial)
+                return
+
             current = self.root_dir
             for i in range(50):
+                if initial: self.update_loading_status(f"Scanning:\n{current}")
                 # Проверка флага
                 with self.image_shown_lock:
                     if initial and self.image_shown_flag: return
@@ -736,30 +868,96 @@ Options:
             self.load_by_path(self.history[self.history_pointer])
 
     def load_by_path(self, path):
+        # [FIX] 1. Сначала отменяем всё старое (меняем поколение)
+        # Это гарантирует, что все последующие запросы (и display, и prefetch)
+        # будут иметь новый, актуальный номер поколения.
+        self.loader.cancel_all()
+        
         self.current_path = path
         self.viewed_paths.add(path)
         self.rotation = 0
         self.last_valid_meta = None
         
+        # 2. Запрашиваем текущее (оно получит новое поколение)
         self.display_current_image()
         self.reset_timer()
         
-        # Предзагрузка следующего
+        # 3. Запускаем предзагрузку (она тоже будет использовать новое поколение)
         threading.Thread(target=self.schedule_prefetches, args=(path,), daemon=True).start()
 
-    def schedule_prefetches(self, path):
-        # Логика предзагрузки простая: берем соседей для плавности
-        sibs = VFS.list_siblings(path, CFG_EXTENSIONS, sort_method=Utils.natural_keys)
-        pa = None; na = None
+
+
+    def schedule_prefetches(self, current_path):
+        """
+        Умная предзагрузка в строгом порядке:
+        1. След. (Draft)
+        2. След. (HQ)
+        3. Тек. (Zoom 2x HQ)
+        4. След. сосед (HQ)
+        5. Тек. (Other zooms HQ)
+        """
+        # 1. Отменяем всё старое - не нужно
+        #self.loader.cancel_all()
+        
+        # Определяем цели
+        targets = []
+        
+        # A. Следующее выбранное (Random или Sequential)
+        next_selected = None
+        if self.slide_mode == 'sequential':
+             # Логика Sequential (берем следующего соседа)
+             sibs = VFS.list_siblings(current_path, CFG_EXTENSIONS, sort_method=Utils.natural_keys)
+             if sibs:
+                 try:
+                     idx = sibs.index(current_path)
+                     next_selected = sibs[(idx + 1) % len(sibs)]
+                 except: pass
+        else:
+            # Логика Random (берем заранее подготовленного или выбираем)
+            if self.next_random_prepared:
+                next_selected = self.next_random_prepared
+            else:
+                # Если вдруг нет (первый запуск), выбираем сейчас
+                if self.all_files:
+                    for _ in range(50):
+                         p = random.choice(self.all_files)
+                         if p not in self.history and p != current_path:
+                             next_selected = p; break
+                    if not next_selected: next_selected = random.choice(self.all_files)
+                    self.next_random_prepared = next_selected
+
+        # B. Соседи (для ручной навигации) - следующий по алфавиту
+        next_neighbor = None
+        sibs = VFS.list_siblings(current_path, CFG_EXTENSIONS, sort_method=Utils.natural_keys)
         if sibs:
             try:
-                i = sibs.index(path)
-                pa = sibs[(i-1)%len(sibs)]
-                na = sibs[(i+1)%len(sibs)]
+                i = sibs.index(current_path)
+                next_neighbor = sibs[(i + 1) % len(sibs)]
             except: pass
+
+        # --- ФОРМИРОВАНИЕ ОЧЕРЕДИ ---
+        # Порядок подачи задач в executor_hq гарантирует порядок выполнения (FIFO)
         
-        # В идеале нужно предзагружать и "рандомного следующего", но пока мы его не знаем
-        self.loader.trigger_prefetch([pa, na], self.zoom_mode, 0)
+        # 1. Следующее выбранное -> DRAFT
+        if next_selected:
+            self.loader.request_load(next_selected, self.zoom_mode, 0, is_draft=True)
+            
+        # 2. Следующее выбранное -> HQ
+        if next_selected:
+            self.loader.request_load(next_selected, self.zoom_mode, 0, is_draft=False)
+            
+        # 3. Текущее -> HQ Zoom 2x (Mode 3)
+        self.loader.request_load(current_path, 3, 0, is_draft=False)
+        
+        # 4. Следующее по порядку (алфавиту) -> HQ (если отличается от selected)
+        if next_neighbor and next_neighbor != next_selected:
+            self.loader.request_load(next_neighbor, self.zoom_mode, 0, is_draft=False)
+            
+        # 5. Текущее -> Остальные зумы HQ
+        # Текущий режим мы уже загрузили (мы его смотрим), так что грузим другие
+        for m in [0, 1, 2]:
+            if m != self.zoom_mode:
+                self.loader.request_load(current_path, m, 0, is_draft=False)
 
     # --- НАВИГАЦИЯ ПО ПАПКАМ ---
 
@@ -870,30 +1068,72 @@ Options:
 
     def display_current_image(self):
         if not self.current_path: return
-        self.ui_executor.submit(self._display_current_image_thread_task)
+        
+        self.current_image_is_final = False 
+        
+        w, h = self.winfo_width(), self.winfo_height()
+        if self.toolbar_locked: h -= CFG_TOOLBAR_HEIGHT
+        if h < 100: h = 100
+        self.loader.update_screen_size(w, h)
 
-    def _display_current_image_thread_task(self):
-        with self.image_shown_lock:
-            self.image_shown_flag = True
+        mode = 3 if self.temp_zoom else self.zoom_mode
+
+        # 1. Пробуем взять из кэша
+        cached = self.loader.get_image_direct(self.current_path, mode, self.rotation)
+        
+        if cached:
+            # Есть в кэше -> показываем сразу
+            self._update_canvas_safe(cached[0], cached[1])
+            if not cached[1]:
+                self.loader.request_load(self.current_path, mode, self.rotation, 
+                                         is_draft=False, callback=self.on_image_ready_callback)
+        else:
+            # Нет в кэше.
+            # [FIX] НЕ удаляем старую картинку, чтобы не было мигания "Loading..."
+            # Вместо этого рисуем текст поверх текущего изображения (если нужно)
             
-            mode = 3 if self.temp_zoom else self.zoom_mode
-            w, h = self.winfo_width(), self.winfo_height()
-            if self.toolbar_locked: h -= CFG_TOOLBAR_HEIGHT
-            if h < 100: h = 100
+            # Удаляем только старые надписи "Loading", если они были
+            if not self.image_shown_flag:
+                msg = f"Loading Image:\n{self.current_path}"
+                # Обрезаем слишком длинные строки для UI
+                if len(msg) > 300: msg = "Loading Image:\n..." + msg[-300:]
+                self.update_loading_status(msg)
+            #self.canvas.delete("loading_text")
             
-            self.loader.update_screen_size(w, h)
-            pil, tk_img = self.loader.load_image_sync(self.current_path, mode, self.rotation)
+            # Можно добавить маленький индикатор в углу, что идет загрузка
+            # cx, cy = self.winfo_width() // 2, self.winfo_height() // 2
+            # self.canvas.create_text(cx, cy, text="Loading...", fill="white", tags="loading_text")
             
-            self.after(0, lambda: self._update_canvas(pil, tk_img))
+            # Запрашиваем загрузку
+            self.loader.request_load(self.current_path, mode, self.rotation, 
+                                     is_draft=True, callback=self.on_image_ready_callback)
+            
+            self.loader.request_load(self.current_path, mode, self.rotation, 
+                                     is_draft=False, callback=self.on_image_ready_callback)
+
+    def on_image_ready_callback(self, path, pil_img, is_final):
+        """Вызывается из рабочего потока."""
+        if path != self.current_path: return
+        self.after(0, lambda: self._update_canvas_safe(pil_img, is_final))
+
+    def _update_canvas_safe(self, pil, is_final):
+        # Если мы уже показываем Final, не даем Draft'у его заменить
+        if self.current_image_is_final and not is_final: return
+        
+        self.current_image_is_final = is_final
+        tk_img = ImageTk.PhotoImage(pil)
+        self._update_canvas(pil, tk_img)
 
     def _update_canvas(self, pil, tk_img):
-        self.canvas.delete("all")
+        # [FIX] Теперь очищаем экран только здесь, когда новая картинка ГОТОВА
+        self.canvas.delete("all") 
+        
         if pil:
             self.last_valid_meta = pil.info.get('original_size', (pil.width, pil.height))
         else:
             self.canvas.create_text(self.winfo_width()//2, self.winfo_height()//2, 
-                                    text="Error/Loading...", fill="white")
-            self.update_info_label(None)
+                                    text="Error", fill="white")
+            if CFG_FORCE_MIN_DURATION: self.reset_timer()
             return
 
         if hasattr(self, 'current_tk_image'): del self.current_tk_image
@@ -911,6 +1151,62 @@ Options:
             self.update_zoom_pan()
         
         self.update_info_label(pil)
+
+        if CFG_FORCE_MIN_DURATION:
+            self.reset_timer()
+
+    def on_image_ready_callback(self, path, pil_img, is_final):
+        """Вызывается из рабочего потока."""
+        # [FIX] Строгая проверка: если путь не совпадает с текущим, игнорируем
+        if path != self.current_path: return
+        self.after(0, lambda: self._update_canvas_safe(pil_img, is_final))
+
+    def _update_canvas_safe(self, pil, is_final):
+        """Обертка для обновления, чтобы не мигать, если уже Final"""
+        if self.current_image_is_final and not is_final:
+            return # Не заменяем хорошее на плохое
+        
+        self.current_image_is_final = is_final
+        tk_img = ImageTk.PhotoImage(pil)
+        
+        # [MOD] Передаем is_final для отладки или логики (можно вывести (DRAFT) в info)
+        self._update_canvas(pil, tk_img)
+
+    # _update_canvas остается практически таким же, как в прошлом шаге
+    # Но стоит добавить проверку is_final, чтобы не сбрасывать таймер дважды, если не хотим
+
+    def _update_canvas(self, pil, tk_img):
+        self.canvas.delete("all")
+        if pil:
+            self.last_valid_meta = pil.info.get('original_size', (pil.width, pil.height))
+        else:
+            self.canvas.create_text(self.winfo_width()//2, self.winfo_height()//2, 
+                                    text="Error/Loading...", fill="white")
+            self.update_info_label(None)
+            # Если ошибка, все равно запускаем таймер, чтобы пропустить файл
+            if CFG_FORCE_MIN_DURATION: self.reset_timer() 
+            return
+
+        if hasattr(self, 'current_tk_image'): del self.current_tk_image
+        self.current_tk_image = tk_img
+
+        cx = self.winfo_width() // 2
+        cy = self.winfo_height() // 2
+        if self.toolbar_locked:
+            visible_h = self.winfo_height() - CFG_TOOLBAR_HEIGHT
+            cy = visible_h // 2
+
+        self.canvas.create_image(cx, cy, image=tk_img, anchor='center', tags='img')
+        
+        if pil.width > self.winfo_width() or pil.height > self.winfo_height():
+            self.update_zoom_pan()
+        
+        self.update_info_label(pil)
+
+        # Запускаем таймер, когда картинка реально показана
+        if CFG_FORCE_MIN_DURATION:
+            self.reset_timer()
+
 
     def update_info_label(self, img):
         if not self.current_path:
@@ -1041,13 +1337,65 @@ Ctrl+S         : Toggle Random/Sequential
         messagebox.showinfo("Help", help_text)
 
     def show_context_menu(self, e):
-        m = Menu(self, tearoff=0)
-        m.add_command(label="Next", command=self.next_image)
-        m.add_command(label="Pause", command=self.toggle_pause)
+        m = tk.Menu(self, tearoff=0)
+        
+        # --- Навигация и Контроль ---
+        # Меняем текст в зависимости от состояния
+        state_label = "Resume Slideshow" if self.is_paused else "Pause Slideshow"
+        m.add_command(label=state_label, command=self.toggle_pause)
         m.add_separator()
-        m.add_command(label="Toggle Mode (Seq/Rnd)", command=self.toggle_slide_mode)
-        m.add_command(label="Open Folder", command=self.open_current_folder)
+        
+        m.add_command(label="Next Image", command=self.next_image)
+        m.add_command(label="Previous Image", command=self.prev_image)
+        
+        # Подменю Режимов
+        mode_menu = tk.Menu(m, tearoff=0)
+        mode_menu.add_radiobutton(label="Random", 
+                                  value='random', variable=tk.StringVar(value=self.slide_mode),
+                                  command=lambda: self.set_slide_mode('random'))
+        mode_menu.add_radiobutton(label="Sequential", 
+                                  value='sequential', variable=tk.StringVar(value=self.slide_mode),
+                                  command=lambda: self.set_slide_mode('sequential'))
+        m.add_cascade(label="Slide Order", menu=mode_menu)
+        
+        m.add_separator()
+        
+        # --- Вид ---
+        view_menu = tk.Menu(m, tearoff=0)
+        view_menu.add_command(label="Toggle Fullscreen (F11)", command=self.toggle_fullscreen)
+        view_menu.add_command(label="Cycle Zoom Mode (Z)", command=self.cycle_zoom)
+        view_menu.add_command(label="Toggle Info Overlay (I)", command=self.cycle_info_preset)
+        m.add_cascade(label="View", menu=view_menu)
+        
+        # --- Трансформация ---
+        m.add_command(label="Rotate Right (Ctrl+R)", command=lambda: self.rotate_image(-90))
+        m.add_command(label="Rotate Left (Ctrl+E)", command=lambda: self.rotate_image(90))
+
+        m.add_separator()
+        
+        # --- Файл ---
+        m.add_command(label="Open File Location", command=self.open_current_folder)
+        m.add_command(label="Copy Path to Clipboard", command=self.copy_path_to_clipboard)
+        
+        m.add_separator()
+        m.add_command(label="Exit", command=self.quit)
+        
         m.tk_popup(e.x_root, e.y_root)
+
+    # Вспомогательный метод для переключения режима через меню
+    def set_slide_mode(self, mode):
+        self.slide_mode = mode
+        # Обновляем заголовок окна
+        title_mode = "SEQ" if self.slide_mode == 'sequential' else "RND"
+        self.title(f"Fast PySlideshow ({title_mode})")
+        # Сбрасываем таймер, чтобы применить настройки
+        self.reset_timer()
+
+    # Вспомогательный метод для копирования пути
+    def copy_path_to_clipboard(self):
+        if self.current_path:
+            self.clipboard_clear()
+            self.clipboard_append(self.current_path)
 
     def show_info_menu(self, e):
         m = Menu(self, tearoff=0)
