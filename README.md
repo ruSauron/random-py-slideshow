@@ -4,7 +4,7 @@
 
 Simple Python 3 slideshow tool for navigating massive image libraries. Made with Gemini. This program should work on Windows, Linux, and macOS.
 
-The program processes hundreds of thousands of images in tens of thousands of folders on a standard hard drive within seconds. It starts displaying images immediately from a random folder while scanning the rest of the directory tree in the background. Supports random shuffle and sequential mode, folder navigation, and maintains a history of the last viewed images.
+The program processes hundreds of thousands of images in tens of thousands of folders on a standard hard drive within seconds. It starts displaying images immediately from a random folder while scanning the rest of the directory tree in the background. Supports random shuffle and sequential mode, folder navigation, and maintains a history of the last viewed images. Images are rendered in two stages for faster display.
 
 ## Requirements
 * Python 3.6+
@@ -34,7 +34,7 @@ Either change directory first from the console or from a batch file:
 | PgUp / PgDn | Random file in the previous / next alphabetically sorted subfolder |
 | **Home** | First File in Folder |
 | **Z** | Toggle Zoom (Fit, Original, Fill) |
-| **Shift** (hold) | 4× Loupe Zoom |
+| **Shift** (hold) | 2× Loupe Zoom |
 | **Ctrl+R / E** | Rotate Clockwise / Counter‑Clockwise |
 | **I** | Toggle File Info |
 | **Enter** | Open File Location |
@@ -46,11 +46,11 @@ Either change directory first from the console or from a batch file:
 
 # Случайное слайд‑шоу (Random Py Slideshow)
 
-Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini. Эта программа должна работать на Windows, Linux и macOS
+Простой инструмент на Python 3 для просмотра огромных коллекций изображений. Сделан с активным использованием Gemini. Эта программа должна работать на Windows, Linux и macOS.
 
-Программа за секунды обрабатывает сотни тысяч картинок в десятках тысяч папок на простом жёстком диске. Слайд‑шоу начинается сразу же со случайной папки, пока остальные файлы сканируются в фоне. Поддерживает случайный порядок и последовательный показ, навигацию внутри папки и до закрытия программы хранит историю последних показанных изображений.
+Программа за секунды обрабатывает сотни тысяч картинок в десятках тысяч папок на простом жёстком диске. Слайд‑шоу начинается сразу же со случайной папки, пока остальные файлы сканируются в фоне. Поддерживает случайный порядок и последовательный показ, навигацию внутри папки и до закрытия программы хранит историю последних показанных изображений. Изображения отрисовываются в 2 этапа для скорейшего показа.
 
-Можно смотреть анимацию своих фото перейдя в последовательный режим и указав задержку менее 0.2с
+Можно смотреть анимацию своих фото перейдя в последовательный режим и указав задержку менее 0.2с.
 
 ## Требования
 * Python 3.6+
@@ -80,7 +80,7 @@ Either change directory first from the console or from a batch file:
 | **PgUp / PgDn** | Случайный файл в предыдущей / следующей по алфавиту подпапке |
 | **Home** | Первый файл в папке |
 | **Z** | Режим масштаба (Вписать, Оригинал, Заполнить) |
-| **Shift** (удерживать) | Лупа ×4 |
+| **Shift** (удерживать) | Лупа ×2 |
 | **Ctrl+R / E** | Вращение по / против часовой стрелки |
 | **I** | Информация о файле (переключение) |
 | **Enter** | Открыть папку с файлом |
