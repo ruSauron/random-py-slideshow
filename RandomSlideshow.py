@@ -379,15 +379,13 @@ class ImageLoader:
                 self.cache.request_image(p, fit_mode, rotation, self.current_screen_size, None)
 
 
-
-
 # --- ГЛАВНЫЙ КЛАСС ПРИЛОЖЕНИЯ ---
 
 class SlideShowApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.slide_mode = CFG_SLIDE_MODE or 'random' # Default mode
         self.parse_cli_args()
+        self.slide_mode = CFG_SLIDE_MODE or 'random' # Default mode
         
         title_mode = "SEQ" if self.slide_mode == 'sequential' else "RND"
         self.title(f"Fast PySlideshow ({title_mode})")
@@ -440,7 +438,7 @@ class SlideShowApp(tk.Tk):
             self.toggle_fullscreen()
 
     def parse_cli_args(self):
-        global CFG_ARCHIVES_ENABLED
+        global CFG_ARCHIVES_ENABLED, CFG_SLIDE_MODE, CFG_SLIDE_DURATION, CFG_BG_COLOR
         parser = argparse.ArgumentParser(add_help=False) # Отключаем стандартный help
         parser.add_argument("path", nargs="?", default=None)
         parser.add_argument("--fullscreen", action="store_true")
@@ -455,6 +453,9 @@ class SlideShowApp(tk.Tk):
         archive_group = parser.add_mutually_exclusive_group()
         archive_group.add_argument("--includeacr", action="store_true")
         archive_group.add_argument("--excludeacr", action="store_true")
+
+        parser.add_argument("--duration", "-t", type=float, help="Slide duration (sec)")
+        parser.add_argument("--bg", type=str, help="Background color (hex)")
 
         self.cli_args = parser.parse_args()
 
@@ -481,8 +482,10 @@ Options:
         if self.cli_args.includeacr: CFG_ARCHIVES_ENABLED = True
         elif self.cli_args.excludeacr: CFG_ARCHIVES_ENABLED = False
 
-        if self.cli_args.sequential:
-            self.slide_mode = 'sequential'
+        if self.cli_args.sequential: global CFG_SLIDE_MODE; CFG_SLIDE_MODE = "sequential"
+        if self.cli_args.duration: CFG_SLIDE_DURATION = self.cli_args.duration
+        if self.cli_args.bg: CFG_BG_COLOR = self.cli_args.bg
+        #if self.cli_args.force_duration: CFG_FORCE_MIN_DURATION = True
 
     def setup_ui(self):
         self.canvas = tk.Canvas(self, bg=CFG_BG_COLOR, highlightthickness=0)
