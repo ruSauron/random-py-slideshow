@@ -14,7 +14,6 @@ import platform
 import re
 from collections import deque, OrderedDict
 from pathlib import Path
-from tkinter import ttk, messagebox, Menu
 # rusauron, RandomSlideshow v0.59
 
 # --- КОНФИГУРАЦИЯ (DEFAULTS) ---
@@ -590,7 +589,7 @@ class SlideShowApp(tk.Tk):
 
         # Вспомогательная функция для создания кнопок с подсказками
         def btn(text, command, width=None, tt=""):
-            b = ttk.Button(self.toolbar, text=text, command=command, width=width)
+            b = tk.Button(self.toolbar, text=text, command=command, width=width)
             b.pack(side='left', padx=2)
             if tt: 
                 ToolTip(b, tt) # Подключаем класс ToolTip
@@ -1312,7 +1311,7 @@ class SlideShowApp(tk.Tk):
 
     # --- MENUS ---
     def show_context_menu(self, e):
-        m = Menu(self, tearoff=0)
+        m = tk.Menu(self, tearoff=0)
         
         # --- Навигация и Контроль ---
         state_label = "Resume Slideshow (Space)" if self.is_paused else "Pause Slideshow (Space)"
@@ -1323,7 +1322,7 @@ class SlideShowApp(tk.Tk):
         m.add_command(label="Previous Image (Left)", command=self.prev_image)
         
         # Подменю Режимов
-        mode_menu = Menu(m, tearoff=0)
+        mode_menu = tk.Menu(m, tearoff=0)
         # Используем текущий режим для отображения галочки (эмуляция радиокнопки через check)
         current_mode = CFG_SLIDE_MODE # Используем глобальную переменную v52
         mode_menu.add_command(label=f"Random {'(Active)' if current_mode=='random' else ''}", 
@@ -1335,15 +1334,15 @@ class SlideShowApp(tk.Tk):
         m.add_separator()
         
         # --- Вид ---
-        view_menu = Menu(m, tearoff=0)
+        view_menu = tk.Menu(m, tearoff=0)
         view_menu.add_command(label="Toggle Fullscreen (F11)", command=self.toggle_fullscreen)
         view_menu.add_command(label="Cycle Zoom Mode (Z)", command=self.cycle_zoom)
         view_menu.add_command(label="Toggle Info Overlay (I)", command=self.cycle_info_preset)
         m.add_cascade(label="View", menu=view_menu)
         
         # --- Трансформация ---
-        m.add_command(label="Rotate Right (Ctrl+R)", command=lambda: self.rotate_image(90))
         m.add_command(label="Rotate Left (Ctrl+E)", command=lambda: self.rotate_image(-90))
+        m.add_command(label="Rotate Right (Ctrl+R)", command=lambda: self.rotate_image(90))
     
         m.add_separator()
         
@@ -1363,7 +1362,7 @@ class SlideShowApp(tk.Tk):
             self.toggle_slide_mode()
 
     def show_info_menu(self, e):
-        m = Menu(self, tearoff=0)
+        m = tk.Menu(self, tearoff=0)
         m.add_checkbutton(label="Show Path", variable=self.show_path, command=lambda: self.update_info_text(self.current_path, self.current_pil))
         m.add_checkbutton(label="Show Name", variable=self.show_name, command=lambda: self.update_info_text(self.current_path, self.current_pil))
         m.add_checkbutton(label="Show Details", variable=self.show_details, command=lambda: self.update_info_text(self.current_path, self.current_pil))
@@ -1381,7 +1380,7 @@ class SlideShowApp(tk.Tk):
         Tab: Toolbar Lock
         F11: Fullscreen
         """
-        messagebox.showinfo("Help", msg)
+        tk.messagebox.showinfo("Help", msg)
 
     def open_current_folder(self):
         if not self.current_path: return
