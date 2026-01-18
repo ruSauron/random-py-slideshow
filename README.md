@@ -12,7 +12,7 @@ The program processes hundreds of thousands of images in tens of thousands of fo
 
 ## Usage
 Run the script in your image folder or pass the path as an argument:  
-`python RandomSlideshow.py "C:\Images"` or zip archive `python RandomSlideshow.py "C:\Images\photos.zip`
+`python RandomSlideshow.py "C:\Images"` or zip archive `python RandomSlideshow.py "C:\Images\photos.zip"`
 
 Either change directory first from the console or from a batch file:
 
@@ -58,7 +58,7 @@ Either change directory first from the console or from a batch file:
 
 ## Запуск
 Запустите скрипт в папке с изображениями или укажите путь аргументом:  
-`python RandomSlideshow.py "C:\Images"` или zip архив `python RandomSlideshow.py "C:\Images\photos.zip`
+`python RandomSlideshow.py "C:\Images"` или zip архив `python RandomSlideshow.py "C:\Images\photos.zip"`
 
 или сначала перейти в папку из консоли или коммандного файла
 
