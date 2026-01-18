@@ -24,7 +24,7 @@ CFG_FORCE_MIN_DURATION = False # Ждать полной загрузки пер
 CFG_BG_COLOR = "#000000"
 CFG_TEXT_COLOR = "#FFFFFF"
 CFG_FONT = ("Segoe UI", 10)
-CFG_TOOLBAR_TRIGGER_ZONE = 100
+CFG_TOOLBAR_TRIGGER_ZONE = 10
 CFG_TOOLBAR_HEIGHT = 40
 CFG_SLIDE_MODE = "random" # random | sequential
 CFG_EXTENSIONS = {'.bmp', '.gif', '.jpg', '.jpeg', '.jfif', '.png', '.tiff', '.webp', '.ico', '.avif'}
@@ -546,7 +546,7 @@ class SlideShowApp(tk.Tk):
         self.cli_args = parser.parse_args()
         
         if self.cli_args.help:
-            print("Usage: RandomSlideshow50.py [path] [options]")
+            print("Usage: RandomSlideshow.py [path] [options]")
             sys.exit(0)
             
         if self.cli_args.path: self.root_dir = os.path.abspath(self.cli_args.path)
@@ -563,7 +563,7 @@ class SlideShowApp(tk.Tk):
 
     def setup_window(self):
         mode = "SEQ" if CFG_SLIDE_MODE == 'sequential' else "RND"
-        self.title(f"RandomSlideshow v50 ({mode})")
+        self.title(f"RandomSlideshow ({mode})")
         self.geometry("1024x768")
         self.configure(bg=CFG_BG_COLOR)
         if self.cli_args.fullscreen: self.toggle_fullscreen()
@@ -606,7 +606,7 @@ class SlideShowApp(tk.Tk):
         self.btn_mode = btn(txt_mode, self.toggle_slide_mode, 4, "Toggle Random/Sequential (Ctrl+S)")
 
         # Toolbar Lock (HIDE / SHOW)
-        self.btn_lock = btn("HIDE", self.toggle_toolbar_lock, 5, "Lock/Unlock Toolbar (Tab)")
+        self.btn_lock = btn("HIDE", self.toggle_toolbar_lock, 6, "Lock/Unlock Toolbar (Tab)")
 
         # Fullscreen
         self.btn_full = btn("FULL", self.toggle_fullscreen, 5, "Toggle Fullscreen (F11/Alt+Enter)")
