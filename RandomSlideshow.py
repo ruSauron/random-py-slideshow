@@ -15,7 +15,7 @@ import re
 from collections import deque, OrderedDict
 from pathlib import Path
 from tkinter import ttk, messagebox, Menu
-# rusauron, RandomSlideshow v0.56
+# rusauron, RandomSlideshow v0.58
 
 # --- КОНФИГУРАЦИЯ (DEFAULTS) ---
 CFG_ARCHIVES_ENABLED = True
@@ -609,7 +609,7 @@ class SlideShowApp(tk.Tk):
         self.btn_lock = btn("HIDE", self.toggle_toolbar_lock, 5, "Lock/Unlock Toolbar (Tab)")
 
         # Fullscreen
-        self.btn_full = btn("FULL", self.toggle_fullscreen, 5, "Toggle Fullscreen (F11)")
+        self.btn_full = btn("FULL", self.toggle_fullscreen, 5, "Toggle Fullscreen (F11/Alt+Enter)")
 
         # Zoom
         self.btn_zoom = btn("ZOOM Fit", self.cycle_zoom, 9, "Change Zoom Mode (Z)")
@@ -630,7 +630,7 @@ class SlideShowApp(tk.Tk):
         btn("vv", self.nav_folder_next, 3, "Next Folder (PgDn)")
 
         # Play / Pause
-        self.btn_play = btn("PAUSE", self.toggle_pause, 6, "Play/Pause Slideshow (Space)")
+        self.btn_play = btn("PAUSE", self.toggle_pause, 6, "Play/Pause Slideshow (Space/P)")
 
         # Speed Control (Sec:)
         tk.Label(self.toolbar, text="Sec:", bg="#333333", fg="white").pack(side='left', padx=(5,0))
@@ -652,11 +652,15 @@ class SlideShowApp(tk.Tk):
         self.lbl_info.bind("<Button-3>", self.show_info_menu)
 
 
+
+
     def bind_events(self):
         # Навигация
         self.bind("<Right>", lambda e: self.next_image())
         self.bind("<Left>", lambda e: self.prev_image())
         self.bind("<space>", lambda e: self.toggle_pause())
+        self.bind("<p>", lambda e: self.toggle_pause())
+        self.bind("<P>", lambda e: self.toggle_pause())
         
         # Внутри папки
         self.bind("<Up>", lambda e: self.prev_file_alpha())
@@ -674,6 +678,7 @@ class SlideShowApp(tk.Tk):
         self.bind("<F11>", lambda e: self.toggle_fullscreen())
         self.bind("<Alt-Return>", lambda e: self.toggle_fullscreen())
         self.bind("<F>", lambda e: self.toggle_fullscreen())
+        self.bind("<f>", lambda e: self.toggle_fullscreen())
 
         # Zoom
         self.bind("z", lambda e: self.cycle_zoom())
@@ -698,27 +703,6 @@ class SlideShowApp(tk.Tk):
         self.bind("<Tab>", lambda e: self.toggle_toolbar_lock())
         
         # Мышь
-        self.canvas.bind("<Motion>", self.check_toolbar_hover)
-        self.canvas.bind("<Button-3>", self.show_context_menu)
-        self.canvas.bind("<B1-Motion>", self.on_canvas_motion, add=True)
-        self.canvas.bind("<Motion>", self.on_canvas_motion, add=True)
-
-        self.canvas.bind("<Configure>", self.on_resize)
-
-        # Initial Layout Update
-        self.update_layout()
-
-    def bind_events(self):
-        self.bind("<Right>", lambda e: self.next_image())
-        self.bind("<Left>", lambda e: self.prev_image())
-        self.bind("<space>", lambda e: self.toggle_pause())
-        self.bind("<Return>", lambda e: self.open_current_folder())
-        self.bind("<F11>", lambda e: self.toggle_fullscreen())
-        self.bind("<Escape>", lambda e: self.toggle_fullscreen(force_exit=True))
-        self.bind("<z>", lambda e: self.cycle_zoom())
-        self.bind("<Z>", lambda e: self.cycle_zoom())
-        self.bind("<Tab>", lambda e: self.toggle_toolbar_lock())
-        
         # Zoom Loupe (Shift)
         self.bind("<Shift_L>", self.enable_temp_zoom)
         self.bind("<KeyRelease-Shift_L>", self.disable_temp_zoom)
@@ -726,9 +710,13 @@ class SlideShowApp(tk.Tk):
         # Mouse
         self.canvas.bind("<Motion>", self.check_toolbar_hover)
         self.canvas.bind("<Button-3>", self.show_context_menu)
+        self.canvas.bind("<Motion>", self.on_canvas_motion, add=True)
         
         # Resize
         self.bind("<Configure>", self.on_resize)
+
+        # Initial Layout Update
+        self.update_layout()
 
     # --- ЛОГИКА СКАНИРОВАНИЯ ---
     def start_initial_search(self):
@@ -954,7 +942,9 @@ class SlideShowApp(tk.Tk):
                 self.reset_timer()
                 
             # Флаг что изображение показано
-            self.image_shown_flag = True
+            cw, ch = self.get_canvas_size()
+            if pil_image.width > cw or pil_image.height > ch:
+                 self.update_zoom_pan()
             
         except Exception as e:
             logging.error(f"Display error: {e}")
@@ -968,24 +958,6 @@ class SlideShowApp(tk.Tk):
 
     def on_image_error(self, path, err_msg):
         self.after(0, lambda: self._handle_error(path, err_msg))
-
-    def _apply_image(self, path, pil_image, is_final):
-        # Проверяем, актуальна ли картинка (хотя loader уже фильтрует, но UI мог убежать)
-        if path != self.current_path: return
-        
-        self.current_pil = pil_image
-        self.current_tk = ImageTk.PhotoImage(pil_image)
-        
-        self.canvas.delete("all")
-        w, h = self.get_canvas_size()
-        self.canvas.create_image(w//2, h//2, image=self.current_tk, anchor='center')
-        
-        # Обновляем Info Label
-        self.update_info_text(path, img=pil_image)
-        
-        # Если это первый показ (Draft или Final) и нужен Force Timer -> запускаем
-        if CFG_FORCE_MIN_DURATION and not self.is_paused and not self.slide_timer:
-            self.reset_timer()
 
     def _handle_error(self, path, err_msg):
         logging.error(f"Failed: {err_msg}")
@@ -1068,6 +1040,50 @@ class SlideShowApp(tk.Tk):
             # Перезапуск отображения с задержкой (debounce)
             if hasattr(self, '_resize_job'): self.after_cancel(self._resize_job)
             self._resize_job = self.after(200, lambda: self.load_by_path(self.current_path) if self.current_path else None)
+
+    def on_canvas_motion(self, event):
+        """Панорамирование изображения, если оно больше экрана."""
+        # Если картинки нет, выходим
+        if not hasattr(self, 'current_tk_image') or not self.current_tk_image:
+            return
+
+        # Получаем размеры области просмотра и изображения
+        w, h = self.get_canvas_size()
+        iw, ih = self.current_tk_image.width(), self.current_tk_image.height()
+
+        # Базовая позиция - по центру
+        target_x = (w - iw) // 2
+        target_y = (h - ih) // 2
+
+        # Если изображение шире экрана - вычисляем смещение по X
+        if iw > w:
+            # event.x может выходить за пределы (если мышь ушла быстро), ограничиваем 0..w
+            mouse_x = max(0, min(w, event.x))
+            ratio_x = mouse_x / w
+            # Смещаем так, чтобы при ratio=0 был левый край (0), при ratio=1 - правый (w-iw)
+            target_x = int(-(iw - w) * ratio_x)
+
+        # Если изображение выше экрана - вычисляем смещение по Y
+        if ih > h:
+            mouse_y = max(0, min(h, event.y))
+            ratio_y = mouse_y / h
+            target_y = int(-(ih - h) * ratio_y)
+
+        # Применяем координаты. Используем тег "current_image", добавленный в фиксе v54
+        # Если тега нет (старая версия), пробуем найти все картинки
+        self.canvas.coords("current_image", target_x, target_y)
+
+    def update_zoom_pan(self):
+        """Принудительно обновляет позицию (например, после загрузки)."""
+        # Эмулируем событие мыши в текущей позиции курсора
+        x = self.winfo_pointerx() - self.canvas.winfo_rootx()
+        y = self.winfo_pointery() - self.canvas.winfo_rooty()
+        
+        class MockEvent: pass
+        e = MockEvent()
+        e.x, e.y = x, y
+        self.on_canvas_motion(e)
+
 
     # --- УПРАВЛЕНИЕ ---
 
