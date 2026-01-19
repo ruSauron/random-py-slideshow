@@ -14,7 +14,8 @@ import platform
 import re
 from collections import deque, OrderedDict
 from pathlib import Path
-# rusauron, RandomSlideshow v0.594
+from tkinter import messagebox #, ttk (использовался для кнопок)
+# rusauron, RandomSlideshow v0.595
 
 # --- КОНФИГУРАЦИЯ (DEFAULTS) ---
 CFG_ARCHIVES_ENABLED = True
@@ -1186,7 +1187,7 @@ class SlideShowApp(tk.Tk):
         CFG_SLIDE_MODE = "sequential" if CFG_SLIDE_MODE == "random" else "random"
         txt = "SEQ" if CFG_SLIDE_MODE == 'sequential' else "RND"
         self.btn_mode.config(text=txt)
-        self.title(f"RandomSlideshow v50 ({txt})")
+        self.title(f"RandomSlideshow ({txt})")
 
     def toggle_toolbar_lock(self):
         self.toolbar_locked = not self.toolbar_locked
@@ -1423,16 +1424,38 @@ class SlideShowApp(tk.Tk):
 
     def show_help(self):
         msg = """
-        [Controls]
-        Arrows: Nav
-        Space: Pause
-        Enter: Open Folder
-        Z: Zoom Mode
-        Shift (Hold): 2x Zoom
-        Tab: Toolbar Lock
-        F11: Fullscreen
-        """
-        tk.messagebox.showinfo("Help", msg)
+[KEYBOARD CONTROLS]
+Navigation:
+  Left / Right      : Previous / Next Image
+  Space             : Play / Pause
+  Up / Down         : Prev / Next File in Current Folder
+  PgUp / PgDn       : Prev / Next Folder (Jump)
+  Home              : First File in Current Folder
+  Enter             : Open File Location
+
+View & Zoom:
+  F11 / Alt+Enter   : Toggle Fullscreen
+  Z                 : Cycle Zoom Modes (Fit, Orig, Fill, 2x)
+  Shift (Hold)      : Temporary Zoom (Loupe)
+  I                 : Cycle Info Overlay (Name/Path/Off)
+  Tab               : Lock/Unlock Toolbar
+
+Actions:
+  Ctrl + S          : Toggle Random / Sequential Mode
+  Ctrl + R / E      : Rotate Right / Left
+  F1                : Show this Help
+
+[COMMAND LINE ARGUMENTS]
+  path              : Path to folder or file to scan
+  --fullscreen      : Start in fullscreen mode
+  --shuffle         : Start in Random mode (default)
+  --seq             : Start in Sequential mode
+  --duration <sec>  : Slide duration in seconds (default: 4.0)
+  --no-archives     : Disable ZIP/CBZ support
+  --bg <color>      : Background color (e.g. #000000)
+"""
+        messagebox.showinfo("Help / Controls", msg)
+
 
     def open_current_folder(self):
         if not self.current_path: return
@@ -1454,4 +1477,3 @@ if __name__ == "__main__":
         try: app.state('zoomed')
         except: pass
     app.mainloop()
-
