@@ -15,7 +15,7 @@ import re
 from collections import deque, OrderedDict
 from pathlib import Path
 from tkinter import messagebox #, ttk (использовался для кнопок)
-# rusauron, RandomSlideshow v0.595
+# rusauron, RandomSlideshow v0.6
 
 # --- КОНФИГУРАЦИЯ (DEFAULTS) ---
 CFG_ARCHIVES_ENABLED = True
@@ -839,52 +839,84 @@ class SlideShowApp(tk.Tk):
             self.load_by_path(self.history[self.history_pointer])
 
     def find_random_image_dynamic_disk(self, initial=False):
+        """
+        Трехступенчатый алгоритм поиска:
+        1. Физический проход (Disk Walk) - 100 попыток найти НЕ посещенный файл.
+        2. Поиск уникального в кэше дерева (Tree Unique) - 100 попыток.
+        3. Любой файл из дерева с перемещением в конец истории (Tree Fallback).
+        """
         curr = self.root_dir
-    
-        # Обновляем инфо при поиске
-        if initial: 
+        
+        if initial:
             self.update_info_text(f"Scanning: {curr}", is_loading=True)
-            self.update() # Важно: обновить UI, иначе текст не появится до конца сканирования
-    
-        for _ in range(100):
+        
+        # --- ФАЗА 1: Случайное блуждание по диску (50 попыток) ---
+        for _ in range(50):
             try:
-                entries = list(os.scandir(curr))
+                with os.scandir(curr) as it:
+                    entries = list(it)
+                
                 dirs = [e.path for e in entries if e.is_dir()]
-                files = [
-                    e.path for e in entries
-                    if e.is_file() and os.path.splitext(e.name)[1].lower() in CFG_EXTENSIONS
-                ]
-    
-                # Если нашли файлы — обрабатываем с вероятностью 30% (как раньше)
-                if files and (not dirs or random.random() < 0.3):
+                files = [e.path for e in entries 
+                         if e.is_file() and os.path.splitext(e.name)[1].lower() in CFG_EXTENSIONS]
+
+                # Если нашли файлы — обрабатываем с вероятностью 30%
+                if files and (not dirs or random.random() < 0.5):
                     p = random.choice(files)
-                    self.after(0, lambda: self._initial_load_callback(p, initial))
-                    return
-    
-                # Если есть поддиректории — идём в случайную
+                    
+                    # [MODIFIED] Проверка: Если файл уже был в истории, ПРОПУСКАЕМ и ищем дальше.
+                    # Обращение к self.viewed_paths безопасно для чтения из потока (set/atomicity)
+                    if p not in self.viewed_paths:
+                        self.after(0, lambda: self._initial_load_callback(p, initial))
+                        return
+                    # Если файл был - цикл продолжается, меняем папку ниже
+
+                # Навигация по папкам
                 if dirs:
                     curr = random.choice(dirs)
                 else:
-                    # Нет поддиректорий И нет файлов — применяем новую логику
-                    if not files and curr != self.root_dir:  # Не в корне и пусто
-                        if random.random() < 0.5:
-                            # 50% — подняться на уровень выше
-                            curr = os.path.dirname(curr)
-                        else:
-                            # 50% — вернуться в корневую директорию
-                            curr = self.root_dir
+                    # Тупик (пустая папка). Пробуем выбраться.
+                    if not files and curr != self.root_dir:
+                        curr = os.path.dirname(curr) if random.random() < 0.8 else self.root_dir
                     else:
-                        # Если в корне или есть файлы (но нет директорий) — прерываем
-                        break
-    
-                if initial:
-                    self.update_info_text(f"Scanning: {curr}", is_loading=True)
-    
+                        break 
+                        
+            except PermissionError:
+                curr = self.root_dir
             except Exception as e:
-                # Лучше логгировать ошибку (опционально)
-                # print(f!Error scanning {curr}: {e}")
+                logging.error(f"Disk walker error: {e}")
                 break
 
+        # --- ФАЗА 2: Поиск уникального в построенном дереве (100 попыток) ---
+        if self.all_files:
+            for _ in range(100):
+                p = random.choice(self.all_files)
+                if p not in self.viewed_paths:
+                    self.after(0, lambda: self._initial_load_callback(p, initial))
+                    return
+
+            # --- ФАЗА 3: Берем любой файл и перемещаем в конец истории ---
+            p = random.choice(self.all_files)
+            self.after(0, lambda: self._load_and_reorder_history(p, initial))
+        
+        else:
+            # Если дерево пустое и поиск не дал результата - пробуем позже
+            if initial:
+                self.after(100, lambda: threading.Thread(target=self.find_random_image_dynamic_disk, args=(True,), daemon=True).start())
+
+
+    def _load_and_reorder_history(self, path, initial):
+        """Безопасно загружает файл и перемещает его в конец истории, если он там был."""
+        # Если файл уже в истории, удаляем его оттуда, чтобы append (в _initial_load_callback)
+        # поместил его в конец, создав эффект "перемещения", а не дублирования.
+        if path in self.history:
+            try:
+                self.history.remove(path)
+            except ValueError:
+                pass
+        
+        # Вызываем стандартный загрузчик (он сам добавит файл в конец истории)
+        self._initial_load_callback(path, initial)
 
 
     def _initial_load_callback(self, p, initial):
