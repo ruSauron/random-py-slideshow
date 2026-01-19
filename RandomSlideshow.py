@@ -14,7 +14,7 @@ import platform
 import re
 from collections import deque, OrderedDict
 from pathlib import Path
-# rusauron, RandomSlideshow v0.59
+# rusauron, RandomSlideshow v0.594
 
 # --- КОНФИГУРАЦИЯ (DEFAULTS) ---
 CFG_ARCHIVES_ENABLED = True
@@ -887,12 +887,17 @@ class SlideShowApp(tk.Tk):
 
 
     def _initial_load_callback(self, p, initial):
-        if initial and self.current_path: return 
+        if initial and self.current_path: return
         self.load_by_path(p)
-        if not self.history: 
-            self.history.append(p)
-            self.history_pointer = 0
+        
+        # [FIX] Всегда добавляем в историю, чтобы работала кнопка Prev
+        # Проверяем на дубликат последнего элемента, чтобы не двоить
+#        if not self.history or self.history[-1] != p:
+        self.history.append(p)
+        self.history_pointer = len(self.history) - 1
+        
         if not self.is_paused: self.reset_timer()
+
 
     def load_by_path(self, path):
         self.current_path = path
@@ -926,65 +931,99 @@ class SlideShowApp(tk.Tk):
         if path != self.current_path:
             return  # Игнорируем устаревшие результаты
         
-        # [FIX] Защита от замены Final на Draft (если вдруг порядок нарушен)
-        # Если мы уже показываем финальную версию, не заменяем её черновиком
+        # [FIX] Защита от замены Final на Draft
         if hasattr(self, '_showing_final_for_path') and \
            self._showing_final_for_path == path and not is_final:
             return
     
         try:
-            # Конвертируем PIL в PhotoImage для tkinter
-            # Важно сохранить ссылку, иначе сборщик мусора удалит картинку
             new_tk_image = ImageTk.PhotoImage(pil_image)
             
-            # Расчет координат (центровка)
             cw, ch = self.get_canvas_size()
-            iw, ih = pil_image.size
-            x = (cw - iw) // 2
-            y = (ch - ih) // 2
+            iw, ih = pil_image.size # Новые размеры
             
-            # [FIX] БЕСШОВНАЯ ОТРИСОВКА
-            # 1. Рисуем НОВОЕ изображение ПОВЕРХ старого
-            new_img_id = self.canvas.create_image(x, y, anchor='nw', image=new_tk_image, tags="new_image")
+            # --- УМНОЕ ПОЗИЦИОНИРОВАНИЕ (Zoom to Mouse) ---
             
-            # 2. Удаляем СТАРОЕ изображение (все что было "current_image")
+            # По умолчанию: центрируем
+            target_x = (cw - iw) // 2
+            target_y = (ch - ih) // 2
+            
+            should_update_pan = True
+
+            # Проверяем, есть ли старое изображение и тот ли это файл
+            # (Если файл новый, то центрирование по умолчанию корректно)
+            # Но если это зум (тот же путь), пытаемся сохранить фокус
+            if path == getattr(self, '_current_image_path_on_screen', None):
+                
+                # Ищем текущую картинку
+                cur_items = self.canvas.find_withtag("current_image")
+                if cur_items:
+                    # Координаты старого изображения (Top-Left)
+                    old_x, old_y = self.canvas.coords(cur_items[0])
+                    
+                    # Размеры старого изображения (берем из stored reference)
+                    if hasattr(self, 'current_tk_image') and self.current_tk_image:
+                        old_w = self.current_tk_image.width()
+                        old_h = self.current_tk_image.height()
+                        
+                        # Координаты курсора мыши
+                        mx = self.canvas.winfo_pointerx() - self.canvas.winfo_rootx()
+                        my = self.canvas.winfo_pointery() - self.canvas.winfo_rooty()
+                        
+                        # Вычисляем относительную позицию курсора на СТАРОЙ картинке (0.0 ... 1.0)
+                        # (mx - old_x) — это смещение курсора от левого края картинки
+                        if old_w > 0 and old_h > 0:
+                            rel_x = (mx - old_x) / old_w
+                            rel_y = (my - old_y) / old_h
+                            
+                            # Теперь вычисляем новый Top-Left (target_x, target_y) так,
+                            # чтобы точка (rel_x, rel_y) на НОВОЙ картинке совпала с mx, my
+                            # mx = new_x + new_w * rel_x  =>  new_x = mx - new_w * rel_x
+                            
+                            target_x = int(mx - (iw * rel_x))
+                            target_y = int(my - (ih * rel_y))
+                            
+                            should_update_pan = False # Мы сами рассчитали позицию, авто-пан не нужен
+
+            # Запоминаем текущий путь
+            self._current_image_path_on_screen = path
+
+            # 1. Рисуем
+            new_img_id = self.canvas.create_image(target_x, target_y, anchor='nw', image=new_tk_image, tags="new_image")
+            
+            # 2. Удаляем старое
             self.canvas.delete("current_image")
             
-            # 3. Удаляем текст статуса (Loading...), теперь он не нужен
+            # 3. Удаляем статус
             self.canvas.delete("status_text")
             
-            # 4. Назначаем новому изображению тег "current_image"
+            # 4. Теги
             self.canvas.dtag(new_img_id, "new_image")
             self.canvas.addtag_withtag("current_image", new_img_id)
-            
-            # 5. Опускаем картинку в самый низ (чтобы меню/тулбары были выше, если они на канвасе)
             self.canvas.tag_lower("current_image")
             
-            # Сохраняем ссылку на объект (обязательно!)
             self.current_tk_image = new_tk_image
+            self.current_pil = pil_image # Для инфо
             
-            # Запоминаем, что мы показали финал для этого пути
             if is_final:
                 self._showing_final_for_path = path
             else:
-                # Если это новый путь, сбрасываем флаг финала
                 if getattr(self, '_showing_final_for_path', None) != path:
                     self._showing_final_for_path = None
     
-            # Обновляем инфо-панель
             self.update_info_text(path, pil_image, is_loading=False)
             
-            # Запускаем таймер только после загрузки финальной версии
             if is_final and CFG_FORCE_MIN_DURATION and not self.is_paused:
                 self.reset_timer()
                 
-            # Флаг что изображение показано
-            cw, ch = self.get_canvas_size()
-            if pil_image.width > cw or pil_image.height > ch:
+            # Если картинка большая и мы не рассчитывали зум вручную (например, это новый файл)
+            # вызываем стандартный апдейт
+            if should_update_pan and (iw > cw or ih > ch):
                  self.update_zoom_pan()
             
         except Exception as e:
             logging.error(f"Display error: {e}")
+
 
     
     def on_image_error(self, path, error_msg):
@@ -999,9 +1038,22 @@ class SlideShowApp(tk.Tk):
     def _handle_error(self, path, err_msg):
         logging.error(f"Failed: {err_msg}")
         self.update_info_text(f"Error: {path} ({err_msg})", is_loading=True)
-        # Авто-пропуск битых файлов, если Play
-        if not self.is_paused:
-            self.after(1000, self.next_image)
+        
+        # [FIX] Переносим битый файл в начало истории, чтобы он не мешал навигации "Назад"
+        if self.history and path in self.history:
+            try:
+                self.history.remove(path)
+                self.history.insert(0, path)
+                # Корректируем указатель: теперь он должен указывать на последний валидный элемент
+                # (т.к. мы удалили текущий битый с конца, указатель сместился или стал указывать на последний валидный)
+                self.history_pointer = len(self.history) - 1
+            except ValueError:
+                pass
+
+        # Авто-пропуск битых файлов (даже если пауза, лучше уйти с битого)
+        # Убрал проверку is_paused, чтобы не зависать на ошибке, или можно оставить по желанию
+        self.after(500, self.next_image)
+
 
     # --- UI UPDATES ---
 
