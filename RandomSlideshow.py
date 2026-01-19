@@ -995,7 +995,7 @@ class SlideShowApp(tk.Tk):
             self.canvas.delete("current_image")
             
             # 3. Удаляем статус
-            self.canvas.delete("status_text")
+            #self.canvas.delete("status_text")
             
             # 4. Теги
             self.canvas.dtag(new_img_id, "new_image")
@@ -1454,3 +1454,4 @@ if __name__ == "__main__":
         try: app.state('zoomed')
         except: pass
     app.mainloop()
+
